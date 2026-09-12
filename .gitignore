@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.DS_Store
+
+# Synthesised demo kit and offline renders. demo.build() regenerates the kit
+# from numpy when kits/ is missing, and no test reads a wav from disk — the
+# full suite passes with kits/ deleted. Nothing here is a required asset.
+*.wav
+
+# Vendored dependencies: 76 MB of numpy/sounddevice/soundfile installed with
+# `pip install --target .pylibs`. Reinstallable from requirements.txt.
+.pylibs/
+
+# Runtime stash for files dropped onto the panel.
+.inbox/

@@ -1,0 +1,94 @@
+/* ===========================================================================
+   LOOP ENGINE — SILKSCREEN
+   The design brief, as code. Nothing below this file may hardcode a value.
+   ---------------------------------------------------------------------------
+   HARD RULE: one continuous rule grid. Every region is bounded by shared 1px
+   hairlines. No gutters between panels, no shadows, no floating elements,
+   no modals. If two things are adjacent, they share a line.
+   =========================================================================== */
+
+:root {
+  /* --- TYPE ------------------------------------------------------------- */
+  --font-display: "Saira Condensed", "Archivo Narrow", "Oswald",
+                  "DIN Alternate", "Liberation Sans Narrow", sans-serif;
+  --font-text:    "IBM Plex Mono", "SFMono-Regular", Menlo,
+                  "DejaVu Sans Mono", Consolas, monospace;
+
+  /* 6 sizes. Nothing outside them. */
+  --t1: 10px;  --lh1: 12px;   /* legends, key caps, units          */
+  --t2: 11px;  --lh2: 15px;   /* body data, paths, lists           */
+  --t3: 13px;  --lh3: 17px;   /* track names, primary values       */
+  --t4: 17px;  --lh4: 20px;   /* panel titles                      */
+  --t5: 26px;  --lh5: 26px;   /* BPM, master gain                  */
+  --t6: 44px;  --lh6: 40px;   /* transport position — once/screen  */
+
+  --tr-tight:  0.02em;        /* display is condensed; let it breathe a hair */
+  --tr-legend: 0.14em;        /* silkscreen legends are letterspaced         */
+
+  /* Letterspacing adds a trailing space after the last glyph. Centred caps
+     therefore sit half of it left of true centre; right-aligned caps sit a
+     full one short of the edge. These cancel it. */
+  --optic-centre: calc(var(--tr-legend) / 2);
+  --optic-right:  calc(var(--tr-legend) * -1);
+
+  /* --- SPACE ------------------------------------------------------------ */
+  --s1:  2px;
+  --s2:  4px;
+  --s3:  8px;
+  --s4: 12px;
+  --s5: 20px;
+  --s6: 32px;
+
+  /* --- COLOUR ----------------------------------------------------------- */
+  --bg:     #0B0B0C;   /* ground                    */
+  --n1:     #141517;   /* neutral 1 — panel ground  */
+  --n2:     #2A2C30;   /* neutral 2 — hairline      */
+  --fg:     #D8D5CC;   /* ink                       */
+  --accent: #FF4A0F;   /* MAX 2 ELEMENTS PER SCREEN */
+
+  /* Dimming is opacity on the ink. Never a new hue. */
+  --dim1: 0.55;
+  --dim2: 0.30;
+
+  /* --- GEOMETRY --------------------------------------------------------- */
+  --r: 0px;
+  --hair: 1px;
+  --line: var(--hair) solid var(--n2);
+
+  /* --- FIXED PANEL WIDTHS (the rule grid) ------------------------------- */
+  --rail:   232px;
+  --insp:   288px;
+  --row-h:   26px;    /* one track strip — 8 fit above 700px tall */
+  --head-h:  34px;
+  --scope-h: 92px;
+  --wave-h: 180px;
+  --pads-h: 168px;
+
+  /* Column templates. Structure, not spacing — declared once, here. */
+  --strip-cols: 18px minmax(0, 1fr) 40px 56px 52px 74px 40px 64px 18px;
+  --meter-w:  4px;
+  --fader-h: 10px;
+  --pad-gap:  1px;    /* pads share hairlines, so the gap IS the rule */
+
+  /* Reserved boxes. Every one of these holds a value that changes while the
+     panel is running; without a fixed box its neighbours would move. */
+  --w-device: 26ch;   /* the output device name        */
+  --w-title:  210px;  /* the waveform panel title      */
+  --w-label:   58px;  /* an inspector row label        */
+  --w-big:     78px;  /* the tempo readout             */
+  --w-mid:     52px;  /* the master readout            */
+  --kbd:       17px;  /* a key cap — square, centred   */
+  --w-msr:     15px;  /* the M / S / R buttons         */
+
+  /* --- MOTION ----------------------------------------------------------- */
+  /* Motion only where it explains something (a state change or a move),
+     always decelerating, never linear, never past the target. Two things in
+     this panel actually move: the focus marker and the browser. */
+  --ease:    cubic-bezier(0.22, 0.61, 0.36, 1);
+  --m-state: 160ms;   /* selection, a queued change landing   */
+  --m-nav:   280ms;   /* the browser taking over the pad grid */
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --m-state: 0ms; --m-nav: 0ms; }
+}

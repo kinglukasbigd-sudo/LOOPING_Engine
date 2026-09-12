@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LOOP ENGINE</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=optional" rel="stylesheet">
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body data-token="{{TOKEN}}">
+
+<div id="app">
+
+  <!-- ── HEAD ─────────────────────────────────────────────────────────── -->
+  <header id="head">
+    <div class="mark">LOOP ENGINE</div>
+    <div class="head-stats">
+      <span class="stat"><i>DEV</i><b id="h-device">—</b></span>
+      <span class="stat"><i>RATE</i><b id="h-rate">—</b></span>
+      <span class="stat"><i>BLOCK</i><b id="h-block">—</b></span>
+      <span class="stat"><i>CTRL</i><b id="h-ctrl">—</b></span>
+      <span class="stat"><i>OUT</i><b id="h-lat">—</b></span>
+      <span class="stat"><i>CPU</i><b id="h-cpu">—</b></span>
+      <span class="stat"><i>XRUN</i><b id="h-xrun">0</b></span>
+      <span class="stat"><i>CLIP</i><b id="h-clip">0</b></span>
+      <span class="stat"><i>VOX</i><b id="h-vox">0/16</b></span>
+      <span class="stat" id="h-link"><i>LINK</i><b id="h-conn">—</b></span>
+    </div>
+  </header>
+
+  <!-- ── RAIL ─────────────────────────────────────────────────────────── -->
+  <section id="rail">
+    <div class="rail-block pos-block">
+      <div class="legend">POSITION — BAR.BEAT</div>
+      <div id="pos" class="pos">001.1</div>
+      <div class="btn-row">
+        <button class="btn" data-act="run">RUN</button>
+        <button class="btn" data-act="rtz">RTZ</button>
+        <button class="btn" data-act="panic">PANIC</button>
+      </div>
+    </div>
+
+    <div class="rail-block">
+      <div class="legend">TEMPO</div>
+      <div class="val-row">
+        <div id="bpm" class="big">124.00</div>
+        <button class="btn tall" data-act="tap">TAP</button>
+      </div>
+      <input id="bpm-slider" class="slider" type="range" min="60" max="200" step="0.25" value="124">
+    </div>
+
+    <div class="rail-block">
+      <div class="legend">LAUNCH QUANTUM</div>
+      <button id="quantum" class="btn wide" data-act="quantum">BAR</button>
+      <div id="pending" class="pending-line">nothing queued</div>
+    </div>
+
+    <div class="rail-block grow">
+      <div class="legend">MASTER</div>
+      <div class="val-row">
+        <div id="master-db" class="big">-3.1</div><span class="unit">dB</span>
+      </div>
+      <input id="master" class="slider" type="range" min="0" max="1.2" step="0.005" value="0.7">
+      <div class="master-meters">
+        <canvas id="mmeter" width="44" height="150"></canvas>
+        <div class="mm-legend"><span>L</span><span>R</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── TRACKS ───────────────────────────────────────────────────────── -->
+  <section id="tracks">
+    <div class="strip head-strip">
+      <span class="c-n">#</span>
+      <span class="c-name">SOURCE</span>
+      <span class="c-bpm">BPM</span>
+      <span class="c-len">LOOP</span>
+      <span class="c-meter">LEVEL</span>
+      <span class="c-gain">GAIN</span>
+      <span class="c-pan">PAN</span>
+      <span class="c-btns">M S R</span>
+      <span class="c-q">Q</span>
+    </div>
+    <div id="strips"></div>
+  </section>
+
+  <!-- ── WAVEFORM ─────────────────────────────────────────────────────── -->
+  <section id="wave">
+    <div class="panel-bar">
+      <span class="panel-title" id="w-title">TRACK 1</span>
+      <span class="seg" id="w-modes">
+        <button class="btn seg-btn" data-mode="STEREO">STEREO</button>
+        <button class="btn seg-btn" data-mode="CTR">CTR</button>
+        <button class="btn seg-btn" data-mode="SIDE">SIDE</button>
+      </span>
+      <span class="spacer"></span>
+      <span class="legend inline" id="w-info">no file</span>
+      <button class="btn" data-act="reslice">RESLICE 16</button>
+      <button class="btn" data-act="browse">LOAD</button>
+      <button class="btn" data-act="unload">EJECT</button>
+    </div>
+    <div class="canvas-wrap">
+      <canvas id="wcanvas"></canvas>
+      <div id="w-empty" class="empty">Track 1 is empty. Press <kbd>L</kbd> to pick a file, or drop one on this panel.</div>
+    </div>
+  </section>
+
+  <!-- ── PADS  (breaks the column grid: runs under the inspector) ─────── -->
+  <section id="pads">
+    <div class="panel-bar">
+      <span class="panel-title">PADS</span>
+      <span class="seg" id="pad-modes">
+        <button class="btn seg-btn" data-pmode="ONE">ONE</button>
+        <button class="btn seg-btn" data-pmode="GATE">GATE</button>
+        <button class="btn seg-btn" data-pmode="LOOP">LOOP</button>
+      </span>
+      <span class="spacer"></span>
+      <span class="legend inline">map 16 slices of the focused track →</span>
+      <button class="btn" data-act="mappads">MAP</button>
+    </div>
+    <div id="padgrid" class="padgrid"></div>
+
+    <div id="browser" class="browser" aria-hidden="true">
+      <div class="panel-bar">
+        <span class="panel-title">LOAD → TRACK <b id="b-target">1</b></span>
+        <span class="legend" id="b-dir">/</span>
+        <span class="spacer"></span>
+        <button class="btn" data-act="b-up">UP</button>
+        <button class="btn" data-act="b-close">CLOSE</button>
+      </div>
+      <div id="b-list" class="b-list"></div>
+    </div>
+  </section>
+
+  <!-- ── INSPECTOR (its column stops here — pads run under it) ────────── -->
+  <aside id="insp">
+    <div class="panel-bar">
+      <span class="panel-title" id="i-title">TRACK 1</span>
+      <span class="spacer"></span>
+      <span class="legend inline">FOCUS</span>
+    </div>
+    <dl id="i-rows" class="rows"></dl>
+    <div id="i-error" class="err" hidden></div>
+    <div class="legend keys-head">KEYS — LEFT HAND</div>
+    <div class="keys">
+      <div class="krow"><kbd class="w">SHIFT</kbd><span>hold — pads become tracks</span></div>
+      <div class="krow sep"><kbd class="w">SPACE</kbd><span>transport run / stop</span></div>
+      <div class="krow"><kbd>5</kbd><kbd>6</kbd><span>loop ÷2 / ×2</span></div>
+      <div class="krow"><kbd>7</kbd><kbd>8</kbd><span>nudge loop ∓1 beat</span></div>
+      <div class="krow"><kbd>T</kbd><kbd>G</kbd><kbd>B</kbd><span>tap / quantum / reverse</span></div>
+      <div class="krow"><kbd>TAB</kbd><kbd>L</kbd><span>next track / load file</span></div>
+      <div class="krow"><kbd class="w">ESC</kbd><span>panic — everything stops</span></div>
+    </div>
+  </aside>
+
+  <!-- ── SCOPE (full bleed) ───────────────────────────────────────────── -->
+  <section id="scope">
+    <canvas id="scanvas"></canvas>
+    <canvas id="gonio" width="92" height="92"></canvas>
+    <div class="scope-legend">
+      <span>MASTER OUT</span><span id="s-corr">CORR +0.00</span>
+    </div>
+  </section>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

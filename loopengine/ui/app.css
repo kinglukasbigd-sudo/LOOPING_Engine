@@ -1,0 +1,370 @@
+/* LOOP ENGINE — panel.
+   Every value here comes from tokens.css. If a number appears raw below it is
+   0, 1fr, 100%, or a canvas pixel — never a colour, size, or space. */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0; padding: 0; height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-text);
+  font-size: var(--t2); line-height: var(--lh2);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  user-select: none;
+}
+
+.legend {
+  font-family: var(--font-display);
+  font-size: var(--t1); line-height: var(--lh1);
+  letter-spacing: var(--tr-legend);
+  text-transform: uppercase;
+  opacity: var(--dim1);
+}
+.legend.inline { opacity: var(--dim2); white-space: nowrap; }
+
+/* ── THE RULE GRID ───────────────────────────────────────────────────── */
+#app {
+  display: grid;
+  height: 100vh;
+  grid-template-columns: var(--rail) minmax(0, 1fr) var(--insp);
+  /* Strips size to their content; spare height goes to the waveform, which is
+     the only panel that gets better with more pixels. */
+  grid-template-rows: var(--head-h) minmax(0, auto)
+                      minmax(var(--wave-h), 1fr) var(--pads-h) var(--scope-h);
+  background: var(--bg);
+}
+#app > * { border-right: var(--line); border-bottom: var(--line); min-width: 0; min-height: 0; }
+
+#head   { grid-column: 1 / 4; grid-row: 1; }
+#rail   { grid-column: 1;     grid-row: 2 / 5; }
+#tracks { grid-column: 2;     grid-row: 2; }
+#wave   { grid-column: 2;     grid-row: 3; }
+#pads   { grid-column: 2 / 4; grid-row: 4; }   /* the break */
+#insp   { grid-column: 3;     grid-row: 2 / 4; }
+#scope  { grid-column: 1 / 4; grid-row: 5; border-bottom: 0; }
+
+/* ── HEAD ────────────────────────────────────────────────────────────── */
+#head {
+  display: flex; align-items: center; gap: var(--s5);
+  padding: 0 var(--s4); background: var(--n1);
+}
+/* Every header value changes while the panel runs. Each gets a reserved box
+   so a CPU figure going 9.8 -> 24.1 does not shove the row along. */
+.mark {
+  font-family: var(--font-display); font-weight: 700;
+  font-size: var(--t4); line-height: var(--lh4);
+  letter-spacing: var(--tr-legend); text-transform: uppercase;
+}
+.head-stats { display: flex; gap: var(--s4); overflow: hidden; }
+.stat { display: flex; align-items: baseline; gap: var(--s2); white-space: nowrap; }
+.stat i {
+  font-style: normal; font-family: var(--font-display);
+  font-size: var(--t1); letter-spacing: var(--tr-legend); opacity: var(--dim2);
+}
+.stat b {
+  font-weight: 500; font-size: var(--t2);
+  display: inline-block; text-align: left;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Each box is exactly as wide as its own widest reading, measured in ch of the
+   mono face. Wide enough never to move, narrow enough to stay next to its
+   label — a single shared width would have spaced the row out. */
+#h-rate  { width:  8ch; }   /* 48000 Hz */
+#h-block { width:  4ch; }   /* 1024     */
+#h-ctrl  { width:  7ch; }   /* 12.3 ms  */
+#h-lat   { width:  7ch; }   /* 12.3 ms  */
+#h-cpu   { width:  7ch; }   /* 100.0 %  */
+#h-xrun  { width:  4ch; }
+#h-clip  { width:  4ch; }
+#h-vox   { width:  5ch; }   /* 16/16    */
+#h-conn  { width:  4ch; }   /* DOWN     */
+.stat.warn b { opacity: 1; text-decoration: underline; }
+.stat.clickable { cursor: pointer; }
+#h-device { width: var(--w-device); text-align: left; }
+
+/* ── RAIL ────────────────────────────────────────────────────────────── */
+#rail { display: flex; flex-direction: column; }
+.rail-block { padding: var(--s3) var(--s4); border-bottom: var(--line); }
+.rail-block.grow { flex: 1; display: flex; flex-direction: column; }
+.pos-block { background: var(--n1); }
+
+.pos {
+  font-family: var(--font-display); font-weight: 700;
+  font-size: var(--t6); line-height: var(--lh6);
+  letter-spacing: var(--tr-tight);
+  font-variant-numeric: tabular-nums;
+  margin: var(--s2) 0 var(--s3);   /* optical, not equal: caps sit high */
+  opacity: var(--dim1);
+}
+.pos.rolling { opacity: 1; color: var(--accent); }   /* ACCENT 1 — playhead */
+
+.big {
+  font-family: var(--font-display); font-weight: 600;
+  font-size: var(--t5); line-height: var(--lh5);
+  font-variant-numeric: tabular-nums; letter-spacing: var(--tr-tight);
+  display: inline-block; min-width: var(--w-big);
+}
+/* One dominant readout per screen. The transport position holds it: largest,
+   the only accent. The master level is a supporting figure, not a rival, so
+   it steps down a size and gives the tempo the second voice. */
+#master-db {
+  font-size: var(--t4); line-height: var(--lh4); min-width: var(--w-mid);
+}
+.unit { font-size: var(--t1); opacity: var(--dim2); }
+.val-row { display: flex; align-items: baseline; gap: var(--s3); margin: var(--s2) 0; }
+.val-row .tall { margin-left: auto; align-self: stretch; }
+
+.btn-row { display: flex; gap: var(--s1); }
+.btn {
+  font-family: var(--font-display); font-weight: 600;
+  font-size: var(--t1); line-height: var(--lh1);
+  letter-spacing: var(--tr-legend); text-transform: uppercase;
+  color: var(--fg); background: transparent;
+  border: var(--line); border-radius: var(--r);
+  padding: var(--s2) var(--s3);
+  cursor: pointer; white-space: nowrap;
+  text-indent: var(--optic-centre);   /* cancel the trailing letterspace */
+}
+.btn:hover { border-color: var(--fg); }
+.btn:active, .btn[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.btn[aria-busy="true"] { border-color: var(--fg); }   /* sent, not yet echoed */
+.btn.wide { width: 100%; }
+.btn:focus-visible { outline: var(--hair) solid var(--fg); outline-offset: var(--s1); }
+
+.slider {
+  -webkit-appearance: none; appearance: none; width: 100%;
+  height: var(--fader-h); background: var(--n2);
+  border-radius: var(--r); margin: var(--s2) 0; cursor: ew-resize;
+}
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none; width: var(--s2); height: var(--fader-h);
+  background: var(--fg); border-radius: var(--r);
+}
+.slider::-moz-range-thumb {
+  width: var(--s2); height: var(--fader-h);
+  background: var(--fg); border: 0; border-radius: var(--r);
+}
+
+.pending-line { font-size: var(--t1); line-height: var(--lh1); margin-top: var(--s2); opacity: var(--dim2); }
+.pending-line.armed { opacity: 1; color: var(--accent); }  /* ACCENT 2 — queued */
+
+.master-meters { display: flex; flex-direction: column; flex: 1; margin-top: var(--s3); }
+#mmeter { width: 100%; flex: 1 1 0; min-height: 0; height: 0;
+          image-rendering: pixelated; }
+.mm-legend {
+  display: flex; justify-content: space-around;
+  font-family: var(--font-display); font-size: var(--t1);
+  letter-spacing: var(--tr-legend); opacity: var(--dim2); padding-top: var(--s1);
+  text-indent: var(--optic-centre);
+}
+
+/* ── TRACK STRIPS ────────────────────────────────────────────────────── */
+#tracks { display: flex; flex-direction: column; overflow: hidden; position: relative; }
+#strips { position: relative; overflow-y: auto; }
+#strips, .b-list, .keys { scrollbar-width: thin; scrollbar-color: var(--n2) var(--bg); }
+#strips::-webkit-scrollbar, .b-list::-webkit-scrollbar,
+.keys::-webkit-scrollbar { width: var(--s2); }
+#strips::-webkit-scrollbar-thumb, .b-list::-webkit-scrollbar-thumb,
+.keys::-webkit-scrollbar-thumb { background: var(--n2); }
+
+.strip {
+  display: grid; grid-template-columns: var(--strip-cols);
+  align-items: center; gap: var(--s2);
+  height: var(--row-h); padding: 0 var(--s3) 0 var(--s4);
+  border-bottom: var(--line); cursor: pointer;
+}
+.head-strip {
+  height: var(--lh3); background: var(--n1); cursor: default;
+  font-family: var(--font-display); font-size: var(--t1);
+  letter-spacing: var(--tr-legend); text-transform: uppercase; opacity: var(--dim1);
+}
+.strip.focused { background: var(--n1); }
+.strip.empty-row .c-name { opacity: var(--dim2); }
+.strip.playing .c-n { opacity: 1; }
+.strip.fired { animation: fire var(--m-state) var(--ease); }
+/* A landed change is an event, not a movement: the row holds fully inverted,
+   then returns in one step. Crossfading it would pass through a mid-grey where
+   neither the name nor the numbers can be read. The easing still governs when
+   the switch lands, and the whole pulse sits inside the state band. */
+@keyframes fire {
+  0%,      72% { background: var(--fg); color: var(--bg); }
+  72.01%, 100% { background: transparent; color: inherit; }
+}
+
+.c-n { font-family: var(--font-display); font-weight: 700; font-size: var(--t3); opacity: var(--dim2); }
+.c-name { font-size: var(--t3); line-height: var(--lh3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.c-bpm, .c-len { font-size: var(--t2); font-variant-numeric: tabular-nums; opacity: var(--dim1); }
+.c-meter canvas { display: block; width: 100%; height: var(--fader-h); }
+.c-gain, .c-pan { display: flex; align-items: center; }
+.c-gain .slider, .c-pan .slider { margin: 0; }
+.c-btns { display: flex; gap: var(--s1); }
+.c-btns .btn {
+  padding: var(--s1) 0; width: var(--w-msr); text-align: center;
+  text-indent: var(--optic-centre);
+}
+.c-q {
+  font-family: var(--font-display); font-size: var(--t1);
+  letter-spacing: var(--tr-legend); text-align: right;
+  margin-right: var(--optic-right);   /* pull the trailing space off the edge */
+}
+.c-q.armed { color: var(--accent); }               /* ACCENT 2 — queued */
+
+/* The one thing that moves in the track list. A transition, not a keyframe,
+   so a fast run down the strips reverses from wherever it currently is. */
+#focusbar {
+  position: absolute; left: 0; top: 0; width: var(--s2);
+  height: var(--row-h); background: var(--fg);
+  transition: transform var(--m-state) var(--ease);
+  will-change: transform; pointer-events: none;
+}
+
+/* ── PANEL BARS ──────────────────────────────────────────────────────── */
+.panel-bar {
+  display: flex; align-items: center; gap: var(--s2);
+  height: var(--lh4); padding: 0 var(--s3);
+  background: var(--n1); border-bottom: var(--line);
+  flex-wrap: nowrap; overflow: hidden; white-space: nowrap;
+}
+.panel-bar > .btn, .panel-bar > .seg { flex: none; }
+.panel-title {
+  font-family: var(--font-display); font-weight: 600;
+  font-size: var(--t2); letter-spacing: var(--tr-legend); text-transform: uppercase;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: none;
+}
+/* Only this one carries a name that changes under it, so only this one needs a
+   reserved box; the rest are constant words and can size to their content. */
+#w-title { flex: 0 1 var(--w-title); min-width: 0; }
+#w-info { overflow: hidden; text-overflow: ellipsis; min-width: 0; flex-shrink: 2; }
+.spacer { flex: 1; }
+.seg { display: flex; }
+.seg .btn { border-right-width: 0; }
+.seg .btn:last-child { border-right-width: var(--hair); }
+
+/* ── WAVEFORM ────────────────────────────────────────────────────────── */
+#wave { display: flex; flex-direction: column; }
+.canvas-wrap { position: relative; flex: 1; min-height: 0; }
+#wcanvas { display: block; width: 100%; height: 100%; cursor: col-resize; }
+#wcanvas { --wave-ink: 0.84; }   /* texture recedes; markers stay at full ink */
+.empty {
+  position: absolute; inset: 0; display: flex; align-items: center;
+  padding: 0 var(--s6); font-size: var(--t2); line-height: var(--lh2);
+  opacity: var(--dim1); pointer-events: none;
+}
+.empty[hidden] { display: none !important; }
+/* A cap holding "1" and a cap holding "W" must read as the same object, so the
+   box is fixed and the glyph is centred in it rather than padded around. */
+kbd {
+  font-family: var(--font-text); font-size: var(--t1);
+  border: var(--line); border-radius: var(--r);
+  display: inline-block; min-width: var(--kbd); padding: 0 var(--s1);
+  margin: 0 var(--s1); text-align: center;
+}
+
+/* ── PADS ────────────────────────────────────────────────────────────── */
+#pads { display: flex; flex-direction: column; position: relative;
+        overflow: hidden; }   /* clips the browser when it is parked */
+.padgrid {
+  flex: 1; display: grid; min-height: 0;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-rows: repeat(4, minmax(0, 1fr));
+  gap: var(--pad-gap); background: var(--n2); padding: var(--pad-gap);
+}
+.pad {
+  background: var(--bg); border: 0; border-radius: var(--r);
+  color: var(--fg); font-family: var(--font-text);
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  align-content: space-between;
+  padding: var(--s1) var(--s3); cursor: pointer; text-align: left;
+  overflow: hidden;
+}
+.pad .p-label { grid-column: 1 / 3; }
+.pad:hover { background: var(--n1); }
+/* .hit is set on pointerdown before anything is sent. .on arrives from the
+   engine a telemetry tick later and takes over without a visible seam. */
+.pad.hit, .pad.on { background: var(--fg); color: var(--bg); }
+.pad.armed .p-key { color: var(--accent); }        /* ACCENT 2 — queued */
+.pad.unmapped { opacity: var(--dim1); }
+.p-key {
+  font-family: var(--font-display); font-weight: 700;
+  font-size: var(--t3); line-height: var(--lh3); letter-spacing: var(--tr-legend);
+}
+.p-label { font-size: var(--t1); line-height: var(--lh1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.p-mode { font-family: var(--font-display); font-size: var(--t1); letter-spacing: var(--tr-legend); opacity: var(--dim2); }
+.pad.on .p-mode, .pad.on .p-label { opacity: 1; }
+
+/* ── BROWSER (replaces the pad grid in place — no modal) ─────────────── */
+/* Navigation, not a modal: the browser takes the pad grid's own box. It stays
+   mounted and slides on transform alone — opaque the whole way, so nothing is
+   ever seen through it, and interrupting it reverses from where it got to. */
+.browser {
+  position: absolute; inset: 0; background: var(--bg);
+  display: flex; flex-direction: column;
+  transform: translateY(101%);
+  transition: transform var(--m-nav) var(--ease);
+  will-change: transform; pointer-events: none;
+}
+.browser.open { transform: translateY(0); pointer-events: auto; }
+.b-list { flex: 1; overflow-y: auto; }
+.b-row {
+  display: grid; grid-template-columns: var(--s5) minmax(0, 1fr) var(--rail) var(--insp);
+  gap: var(--s3); align-items: center;
+  padding: var(--s1) var(--s4); border-bottom: var(--line);
+  font-size: var(--t2); cursor: pointer;
+}
+.b-row:hover { background: var(--n1); }
+.b-row .k { font-family: var(--font-display); font-size: var(--t1); letter-spacing: var(--tr-legend); opacity: var(--dim2); }
+.b-row .sz { text-align: right; opacity: var(--dim2); font-variant-numeric: tabular-nums; }
+.b-row .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.b-row .to { display: flex; gap: var(--s1); justify-content: flex-end; }
+.b-row .to .btn { padding: 0 var(--s2); }
+
+/* ── INSPECTOR ───────────────────────────────────────────────────────── */
+#insp { display: flex; flex-direction: column; overflow: hidden; }
+.rows { margin: 0; padding: var(--s3) var(--s4); display: grid;
+        grid-template-columns: var(--w-label) minmax(0, 1fr); gap: 0 var(--s4); }
+.rows dt {
+  font-family: var(--font-display); font-size: var(--t1); line-height: var(--lh2);
+  letter-spacing: var(--tr-legend); text-transform: uppercase; opacity: var(--dim2);
+}
+.rows dd {
+  margin: 0; font-size: var(--t2); line-height: var(--lh2);
+  font-variant-numeric: tabular-nums; text-align: right;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* The wordmark is letterspaced; without this it starts a hair right of the
+   panel edges below it. Baseline, not box, is what the eye lines up. */
+.mark { margin-left: calc(var(--tr-legend) * -0.5); }
+.err {
+  margin: 0 var(--s4) var(--s3); padding: var(--s3);
+  border: var(--line); border-left-width: var(--s1); border-left-color: var(--fg);
+  font-size: var(--t2); line-height: var(--lh2);
+}
+/* silkscreen instructions belong at the bottom edge of the plate */
+.keys-head { margin-top: auto; padding: var(--s3) var(--s4) var(--s2);
+             border-top: var(--line); }
+.keys { padding: 0 var(--s4) var(--s3); overflow-y: auto; }
+.krow { display: flex; align-items: center; gap: var(--s1); padding: var(--s1) 0; font-size: var(--t1); }
+.krow span { margin-left: var(--s3); opacity: var(--dim1); line-height: var(--lh1); }
+.krow.sep { border-top: var(--line); margin-top: var(--s2); padding-top: var(--s3); }
+kbd.w { letter-spacing: var(--tr-legend); text-indent: var(--optic-centre); }
+
+/* ── SCOPE ───────────────────────────────────────────────────────────── */
+#scope { position: relative; display: flex; background: var(--bg); }
+#scanvas { display: block; flex: 1 1 0; min-width: 0; width: 0; height: 100%; }
+#gonio { display: block; height: 100%; width: var(--scope-h); border-left: var(--line); }
+.scope-legend {
+  position: absolute; left: var(--s4); top: var(--s3); right: 0;
+  display: flex; gap: var(--s5); pointer-events: none;
+  font-family: var(--font-display); font-size: var(--t1);
+  letter-spacing: var(--tr-legend); text-transform: uppercase; opacity: var(--dim2);
+}
+/* CORR +1.00 / CORR -0.98 — one character narrower on the minus, so it gets a
+   box like every other live figure. */
+#s-corr { display: inline-block; width: 13ch; white-space: nowrap; }
+
+/* ── STATE ───────────────────────────────────────────────────────────── */
+body.offline #h-conn { text-decoration: line-through; }
