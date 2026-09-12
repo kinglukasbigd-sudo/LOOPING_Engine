@@ -7,6 +7,11 @@ from . import dsp
 
 MODES = ["STEREO", "CTR", "SIDE"]
 
+# A loop shorter than this is not a loop, it is a click generator. Above it,
+# regions shorter than one callback block are allowed and wrap several times
+# per block — the modulo gather handles that, and it is a usable effect.
+MIN_LOOP = 64
+
 
 class Track:
     """State + render. All positions are in *source* samples, float64 phase.
@@ -108,7 +113,7 @@ class Track:
             return
 
         L = self.loop_len
-        if L < 64:
+        if L < MIN_LOOP:
             return
 
         step = self.speed * (self.sr / float(engine_sr))
@@ -148,15 +153,44 @@ class Track:
         self._gl, self._gr = dsp.pan_gains(self.pan)
 
     def set_loop(self, start: int, end: int):
-        start = max(0, min(int(start), self.frames - 64))
-        end = max(start + 64, min(int(end), self.frames))
+        """Set the region, defining every degenerate case rather than trusting
+        the caller.
+
+          reversed or empty (end <= start)  -> a MIN_LOOP region at start
+          shorter than MIN_LOOP             -> widened to MIN_LOOP
+          shorter than one block            -> kept; it wraps several times
+                                               per block, which is a real use
+          past the end of the file          -> clamped, start pulled back
+          playhead outside the new region   -> wrapped into it, not snapped to
+                                               the start: wrapping is what the
+                                               render loop does on every pass,
+                                               so it stays continuous instead
+                                               of jumping
+
+        The crossfade is not adjusted here; render() already takes the
+        smallest of the requested fade, a quarter of the region, and whatever
+        material exists past the end.
+        """
+        if self.frames < MIN_LOOP:
+            self.loop_start, self.loop_end = 0, self.frames
+            return
+        start = int(start)
+        end = int(end)
+        if end <= start:
+            end = start + MIN_LOOP
+        start = max(0, min(start, self.frames - MIN_LOOP))
+        end = max(start + MIN_LOOP, min(end, self.frames))
+        if end - start < MIN_LOOP:                      # ran out of file
+            start = max(0, end - MIN_LOOP)
         self.loop_start, self.loop_end = start, end
+
+        L = end - start
         if not (start <= self.phase < end):
-            self.phase = float(start)
+            self.phase = start + ((self.phase - start) % L)
 
     def scale_loop(self, factor: float):
         """Halve or double the loop, anchored at the start."""
-        L = max(64, int(round(self.loop_len * factor)))
+        L = max(MIN_LOOP, int(round(self.loop_len * factor)))
         self.set_loop(self.loop_start, self.loop_start + L)
 
     def nudge_loop(self, frames: int):

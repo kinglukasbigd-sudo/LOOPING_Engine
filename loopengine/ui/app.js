@@ -165,6 +165,18 @@ function bytes(n) {
 /* A loop drag redraws from the pointer, not from the next telemetry tick.
    `dragLoop` holds the local truth until the engine echoes the same numbers. */
 let dragLoop = null;
+let grabbed = null;        // 'in' | 'out' | 'new' while the pointer is down
+let handleFocus = 'in';    // which handle the arrow keys move
+
+/* Setting dragLoop is enough for the canvas, which redraws next frame, but the
+   readouts are DOM text written by the render loop — so a frame would pass
+   before the digits moved. Write them here instead: the whole visible result
+   of the gesture lands before the socket call, not a frame after it. */
+function paintRegion(i, ls, le) {
+  dragLoop = { i, ls, le };
+  setText($('#w-in'), ls.toLocaleString('en-US'));
+  setText($('#w-out'), le.toLocaleString('en-US'));
+}
 function liveLoop(i, t) {
   if (dragLoop && dragLoop.i === i) return [dragLoop.ls, dragLoop.le];
   return [t.ls, t.le];
@@ -282,7 +294,13 @@ async function openPicker(multiple) {
 
 function paintAwaiting() {
   $$('#strips .strip').forEach((el, k) => {
-    el.classList.toggle('awaiting', k === awaitingPick);
+    const on = k === awaitingPick;
+    el.classList.toggle('awaiting', on);
+    if (on) setText(el.querySelector('.c-name'), 'waiting for the file dialog');
+    else if (S && S.tracks[k]) {
+      setText(el.querySelector('.c-name'),
+              S.tracks[k].loaded ? S.tracks[k].name : 'empty');
+    }
   });
 }
 
@@ -462,6 +480,11 @@ function renderInspector() {
       `Track ${focus + 1} is empty. Press <kbd>L</kbd> to pick a file, ` +
       `or drop one on this panel.`;
   }
+  const [rls, rle] = liveLoop(focus, t);
+  setText($('#w-in'), t.loaded ? rls.toLocaleString('en-US') : '—');
+  setText($('#w-out'), t.loaded ? rle.toLocaleString('en-US') : '—');
+  $$('.rgn').forEach((el, k) =>
+    el.classList.toggle('aimed', t.loaded && handleFocus === (k ? 'out' : 'in')));
   setText($('#w-info'), t.loaded
     ? `${t.sr} Hz · ${t.ch} ch · ${secs(t.frames, t.sr)} · ${t.slices} slices` +
       (m.slice_method ? ` (${m.slice_method})` : '')
@@ -504,6 +527,48 @@ function renderInspector() {
 }
 
 /* ── canvases ───────────────────────────────────────────────────────── */
+/* The peak plot is the expensive part and it only changes when the file, the
+   source mode or the canvas size changes. Plot it once into an offscreen
+   canvas and blit that each frame; a drag then moves the region and the
+   handles only, and never re-walks the peak array. */
+const waveCache = { key: '', dim: null, hot: null };
+
+function waveKey(t, W, H) {
+  return [focus, t.mode, t.frames, W, H, (peaks[focus] || []).length].join(':');
+}
+
+function plot(W, H, colour) {
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;                  // transparent ground: ink only
+  const g = cv.getContext('2d');
+  const pk = peaks[focus];
+  if (pk) {
+    const n = pk.length / 2, mid = H / 2;
+    g.fillStyle = colour;
+    for (let x = 0; x < W; x++) {
+      const k = Math.min(n - 1, Math.floor(x / W * n));
+      const yTop = mid - pk[k * 2 + 1] * mid * 0.92;
+      const yBot = mid - pk[k * 2] * mid * 0.92;
+      g.fillRect(x, yTop, 1, Math.max(1, yBot - yTop));
+    }
+  }
+  return cv;
+}
+
+/* Two layers, both plotted only when the key changes: the excluded ends in
+   ink and the chosen region in accent. Clipping one over the other tints the
+   samples themselves. Compositing a colour over the region instead would fill
+   the whole rectangle, because the ground beneath it is opaque. */
+function buildWaveCache(t, W, H) {
+  const key = waveKey(t, W, H);
+  if (waveCache.key !== key) {
+    waveCache.dim = plot(W, H, C.fg);
+    waveCache.hot = plot(W, H, C.accent);
+    waveCache.key = key;
+  }
+  return waveCache;
+}
+
 function fit(cv) {
   const r = window.devicePixelRatio || 1;
   const w = Math.max(1, Math.round(cv.clientWidth * r));
@@ -565,10 +630,11 @@ function drawWave() {
   if (!S) return;
   const t = S.tracks[focus];
   if (!t.loaded) return;
-  const pk = peaks[focus];
-  const mid = H / 2;
+  const [lsF, leF] = liveLoop(focus, t);
+  const x0 = Math.round(lsF / t.frames * W);
+  const x1 = Math.round(leF / t.frames * W);
 
-  // beat grid
+  // beat grid, behind everything
   const bf = beatFrames(t);
   if (bf > 0 && t.frames > 0) {
     const nb = Math.floor(t.frames / bf);
@@ -581,49 +647,53 @@ function drawWave() {
     }
   }
 
-  const [lsF, leF] = liveLoop(focus, t);
-  const x0 = Math.round(lsF / t.frames * W);
-  const x1 = Math.round(leF / t.frames * W);
+  // excluded ends: the ink layer, dimmed
+  const cache = buildWaveCache(t, W, H);
+  g.globalAlpha = DIM2;
+  g.drawImage(cache.dim, 0, 0);
+  g.globalAlpha = 1;
 
-  // waveform: dim outside the loop, full inside
-  if (pk) {
-    const n = pk.length / 2;
-    for (let x = 0; x < W; x++) {
-      const k = Math.min(n - 1, Math.floor(x / W * n));
-      const lo = pk[k * 2], hi = pk[k * 2 + 1];
-      const inLoop = x >= x0 && x < x1;
-      g.globalAlpha = inLoop ? WAVE_INK : DIM2;
-      g.fillStyle = C.fg;
-      const yTop = mid - hi * mid * 0.92;
-      const yBot = mid - lo * mid * 0.92;
-      g.fillRect(x, yTop, 1, Math.max(1, yBot - yTop));
-    }
-    g.globalAlpha = 1;
+  // the chosen region: the accent layer, clipped to it — the samples
+  // themselves change colour, nothing is filled behind them
+  if (x1 > x0) {
+    g.save();
+    g.beginPath();
+    g.rect(x0, 0, x1 - x0, H);
+    g.clip();
+    g.drawImage(cache.hot, 0, 0);
+    g.restore();
   }
 
-  // slice ticks
+  // slice markers: aiming points only, they never move a loop point
   const m = (S.meta && (S.meta[focus] || S.meta[String(focus)])) || {};
   if (m.slices) {
     g.fillStyle = C.fg;
     g.globalAlpha = DIM1;
-    for (const s of m.slices) {
-      const x = Math.round(s / t.frames * W);
+    for (const sl of m.slices) {
+      const x = Math.round(sl / t.frames * W);
       g.fillRect(x, 0, 1, 7 * r);
       g.fillRect(x, H - 7 * r, 1, 7 * r);
     }
     g.globalAlpha = 1;
   }
 
-  // loop edges + handles
-  g.fillStyle = C.fg;
-  g.fillRect(x0, 0, 1, H);
-  g.fillRect(x1 - 1, 0, 1, H);
-  g.fillRect(x0, 0, 5 * r, 3 * r);
-  g.fillRect(x1 - 5 * r, H - 3 * r, 5 * r, 3 * r);
+  // the two handles
+  const hw = Math.max(3, Math.round(4 * r));
+  for (const [x, edge] of [[x0, 'in'], [x1, 'out']]) {
+    const lit = (grabbed === edge) || (handleFocus === edge);
+    g.fillStyle = C.accent;
+    g.fillRect(edge === 'in' ? x : x - 1, 0, 1, H);
+    g.fillRect(edge === 'in' ? x : x - hw, 0, hw, hw * (lit ? 3 : 2));
+    g.fillRect(edge === 'in' ? x : x - hw, H - hw * (lit ? 3 : 2), hw,
+               hw * (lit ? 3 : 2));
+  }
 
-  // playhead — ACCENT
+  /* Playhead in ink, not accent: the region already carries accent here, and
+     the moving thing has to stay legible on top of it. */
   const xp = Math.round(t.phase / t.frames * W);
-  g.fillStyle = C.accent;
+  g.fillStyle = C.bg;
+  g.fillRect(xp - Math.round(r), 0, Math.round(r) * 3, H);
+  g.fillStyle = C.fg;
   g.fillRect(xp, 0, Math.max(1, Math.round(r)), H);
 
   g.font = `${T1 * r}px ${FONT_TEXT}`;
@@ -701,39 +771,82 @@ function frame() {
     return Math.max(0, Math.min(t.frames,
       Math.round((e.clientX - b.left) / b.width * t.frames)));
   };
+  const commit = (ls, le) => {
+    paintRegion(focus, ls, le);                 // paint first, always
+    send({ op: 'track.loop', i: focus, ls, le });
+  };
+
+  cv.addEventListener('mousemove', (e) => {
+    if (drag || !S || !S.tracks[focus].loaded) return;
+    const t = S.tracks[focus];
+    const b = cv.getBoundingClientRect();
+    const grab = 8 / b.width * t.frames;
+    const f = xToFrame(e);
+    const [ls, le] = liveLoop(focus, t);
+    cv.style.cursor = (Math.abs(f - ls) < grab || Math.abs(f - le) < grab)
+      ? 'col-resize' : 'crosshair';
+  });
+
   cv.addEventListener('mousedown', (e) => {
     if (!S || !S.tracks[focus].loaded) return;
     const t = S.tracks[focus];
     const b = cv.getBoundingClientRect();
     const grab = 8 / b.width * t.frames;
     const f = xToFrame(e);
-    if (Math.abs(f - t.ls) < grab) drag = { edge: 'in', le: t.le };
-    else if (Math.abs(f - t.le) < grab) drag = { edge: 'out', ls: t.ls };
-    else drag = { edge: 'new', anchor: f };
+    const [ls, le] = liveLoop(focus, t);
+    if (Math.abs(f - ls) < grab) { drag = { edge: 'in', le }; handleFocus = 'in'; }
+    else if (Math.abs(f - le) < grab) { drag = { edge: 'out', ls }; handleFocus = 'out'; }
+    else { drag = { edge: 'new', anchor: f }; handleFocus = 'out'; }
+    grabbed = drag.edge;                        // lights the handle this frame
     e.preventDefault();
   });
+
   window.addEventListener('mousemove', (e) => {
     if (!drag || !S) return;
     const f = xToFrame(e);
-    let ls, le;
-    if (drag.edge === 'in') { ls = Math.min(f, drag.le - 64); le = drag.le; }
-    else if (drag.edge === 'out') { ls = drag.ls; le = Math.max(f, drag.ls + 64); }
-    else { ls = Math.min(drag.anchor, f); le = Math.max(drag.anchor, f); }
-    dragLoop = { i: focus, ls, le };        // paint first
-    send({ op: 'track.loop', i: focus, ls, le });
+    if (drag.edge === 'in') commit(Math.min(f, drag.le - 64), drag.le);
+    else if (drag.edge === 'out') commit(drag.ls, Math.max(f, drag.ls + 64));
+    else commit(Math.min(drag.anchor, f), Math.max(drag.anchor, f));
   });
+
   window.addEventListener('mouseup', () => {
     drag = null;
-    // hand back to the engine once it has caught up, never mid-drag
+    grabbed = null;
     if (dragLoop) {
       const held = dragLoop;
-      setTimeout(() => { if (dragLoop === held) dragLoop = null; }, 200);
+      // the engine may hold a region change until the next quantum, so keep
+      // showing the hand's version until the engine reports the same numbers
+      const settle = setInterval(() => {
+        if (dragLoop !== held) return clearInterval(settle);
+        const t = S && S.tracks[held.i];
+        if (t && t.ls === held.ls && t.le === held.le) {
+          dragLoop = null; clearInterval(settle);
+        }
+      }, 120);
+      setTimeout(() => { if (dragLoop === held) dragLoop = null; }, 4000);
     }
   });
+
   cv.addEventListener('dblclick', () => {
-    if (S) send({ op: 'track.loop', i: focus, ls: 0, le: S.tracks[focus].frames });
+    if (S) commit(0, S.tracks[focus].frames);
   });
 })();
+
+/* Arrows nudge the focused handle. Fine is one pixel of the plot so a press
+   is always visible; coarse is a beat of the file's own tempo. */
+function nudgeHandle(dir, coarse) {
+  if (!S) return;
+  const t = S.tracks[focus];
+  if (!t.loaded) return;
+  const W = $('#wcanvas').getBoundingClientRect().width || 1;
+  const step = coarse ? Math.round(beatFrames(t))
+                      : Math.max(1, Math.round(t.frames / W));
+  let [ls, le] = liveLoop(focus, t);
+  if (handleFocus === 'in') ls = Math.min(ls + dir * step, le - 64);
+  else le = Math.max(le + dir * step, ls + 64);
+  paintRegion(focus, ls, le);                    // paint first
+  send({ op: 'track.loop', i: focus, ls, le });
+}
 
 /* ── buttons ────────────────────────────────────────────────────────── */
 const ACT = {
@@ -819,6 +932,10 @@ window.addEventListener('keydown', (e) => {
     case 'KeyT': send({ op: 'tap' }); break;
     case 'KeyG': ACT.quantum(); break;
     case 'KeyB': markQueued(focus, 'REV'); send({ op: 'track.rev', i: focus }); break;
+    case 'ArrowLeft':  e.preventDefault(); nudgeHandle(-1, e.shiftKey); break;
+    case 'ArrowRight': e.preventDefault(); nudgeHandle(+1, e.shiftKey); break;
+    case 'ArrowUp':    e.preventDefault(); handleFocus = 'in'; break;
+    case 'ArrowDown':  e.preventDefault(); handleFocus = 'out'; break;
     case 'KeyL': e.preventDefault();
       if (e.shiftKey) openPicker(true); else openBrowser();
       break;

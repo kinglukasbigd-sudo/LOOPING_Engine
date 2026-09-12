@@ -28,6 +28,12 @@ LAT_N = 512          # rolling window of command pickup times
 QUANTIZED = {
     "track.play", "track.stop", "track.toggle", "track.rev", "track.retrig",
     "pad.trigger.q",
+    # A region change on a running track lands on the boundary too. Moving the
+    # points under a moving playhead is what clicks; landing them where the
+    # material is already coherent, with the existing equal-power crossfade
+    # over the new seam, is what does not. The panel paints the drag locally,
+    # so the hand still gets an answer on the same frame.
+    "track.loop", "track.loop.scale", "track.loop.nudge", "track.loop.slice",
 }
 
 
@@ -250,7 +256,9 @@ class Engine:
             self.tracks[i].queued = {
                 "track.play": "START", "track.stop": "STOP",
                 "track.toggle": "TOGGLE", "track.rev": "REV",
-                "track.retrig": "RETRIG"}.get(op, op)
+                "track.retrig": "RETRIG", "track.loop": "LOOP",
+                "track.loop.scale": "LOOP", "track.loop.nudge": "LOOP",
+                "track.loop.slice": "LOOP"}.get(op, op)
         self.pending_labels = [o for o, _ in self._pending]
 
     def _fire(self):

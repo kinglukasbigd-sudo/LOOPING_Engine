@@ -213,6 +213,10 @@ html, body {
   font-family: var(--font-display); font-size: var(--t1);
   letter-spacing: var(--tr-legend); text-align: right;
   margin-right: var(--optic-right);   /* pull the trailing space off the edge */
+  /* An empty span is zero high and centres differently from a filled one, so
+     this cell moved every time a track started, stopped or queued. It holds
+     its line box whether it reads LOOP, a play mark, or nothing at all. */
+  height: var(--lh2); line-height: var(--lh2);
 }
 .c-q.armed { color: var(--accent); }               /* ACCENT 2 — queued */
 
@@ -243,6 +247,18 @@ html, body {
    reserved box; the rest are constant words and can size to their content. */
 #w-title { flex: 0 1 var(--w-title); min-width: 0; }
 #w-info { overflow: hidden; text-overflow: ellipsis; min-width: 0; flex-shrink: 2; }
+/* The two region figures, each in a box wide enough for any sample offset a
+   file can hold, so dragging never shoves the buttons along. */
+.rgn { display: flex; align-items: baseline; gap: var(--s2); flex: none; }
+.rgn i {
+  font-style: normal; font-family: var(--font-display);
+  font-size: var(--t1); letter-spacing: var(--tr-legend); opacity: var(--dim2);
+}
+.rgn b {
+  font-weight: 500; font-size: var(--t2); font-variant-numeric: tabular-nums;
+  display: inline-block; width: 9ch; text-align: right;
+}
+.rgn.aimed b { color: var(--accent); }
 .spacer { flex: 1; }
 .seg { display: flex; }
 .seg .btn { border-right-width: 0; }
