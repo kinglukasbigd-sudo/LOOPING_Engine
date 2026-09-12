@@ -205,6 +205,13 @@ def make_handler(app):
                 return self._json({"error": "bad token"}, 403)
             if path == "/api/upload":
                 return self._upload()
+            if path == "/api/pick":
+                n = int(self.headers.get("Content-Length", "0"))
+                body = json.loads(self.rfile.read(n) or b"{}") if n else {}
+                req, info = app.pick_async(int(body.get("track", 0)),
+                                           bool(body.get("multiple")),
+                                           body.get("dir"))
+                return self._json({"req": req, **info})
             return self._json({"error": "no such endpoint"}, 404)
 
         def _static(self, path):
@@ -230,6 +237,8 @@ def make_handler(app):
                 return self._json(app.devices())
             if path == "/api/latency":
                 return self._json(app.engine.latency())
+            if path == "/api/pick":
+                return self._json(app.pick_backend())
             return self._json({"error": "no such endpoint"}, 404)
 
         def _upload(self):

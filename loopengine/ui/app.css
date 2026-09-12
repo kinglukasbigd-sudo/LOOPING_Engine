@@ -182,6 +182,10 @@ html, body {
   letter-spacing: var(--tr-legend); text-transform: uppercase; opacity: var(--dim1);
 }
 .strip.focused { background: var(--n1); }
+/* Waiting on the OS dialog. Same accent role as a queued change — the thing
+   that is about to happen — carried on the hairline the row already has, so
+   nothing floats over the grid and no layer dims it. */
+.strip.awaiting { border-bottom-color: var(--accent); }
 .strip.empty-row .c-name { opacity: var(--dim2); }
 .strip.playing .c-n { opacity: 1; }
 .strip.fired { animation: fire var(--m-state) var(--ease); }

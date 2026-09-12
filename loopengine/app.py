@@ -1,6 +1,7 @@
 """Wiring: engine + loader + server + telemetry pump."""
 from __future__ import annotations
 
+import collections
 import os
 import struct
 import threading
@@ -8,6 +9,7 @@ import time
 
 import numpy as np
 
+from . import picker
 from .loader import Loader, AUDIO_EXT
 from .server import Hub, new_token, OP_BIN, BIN_SCOPE, BIN_PEAKS
 from .track import MODES
@@ -27,6 +29,13 @@ class App:
         self.loader = Loader(engine, on_done=self._loaded,
                              on_error=self._load_error)
         self.peaks = {}     # track index -> ndarray (buckets, 2)
+        # Paths this server itself returned from a user-driven OS dialog.
+        # The dialog exists to reach folders outside --root, so its results
+        # cannot be judged by the root check; choosing a file in the OS
+        # picker IS the grant. Only paths we produced are trusted, never
+        # paths a caller supplies, and the set is bounded.
+        self._granted = collections.OrderedDict()
+        self._pick_seq = 0
         self.meta = {}      # track index -> dict of analysis results
         self._stop = threading.Event()
 
@@ -79,10 +88,51 @@ class App:
         self.engine.last_error = msg
 
     # -- file system -------------------------------------------------------
+    GRANT_MAX = 64
+
+    def _grant(self, p):
+        rp = os.path.realpath(p)
+        self._granted[rp] = True
+        while len(self._granted) > self.GRANT_MAX:
+            self._granted.popitem(last=False)
+
     def _inside_roots(self, p):
         rp = os.path.realpath(p)
+        if rp in self._granted:
+            return True
         return any(rp == r or rp.startswith(r + os.sep)
                    for r in self.roots + [self.inbox])
+
+    # -- native dialog -----------------------------------------------------
+    def pick_backend(self):
+        name, reason = picker.backend()
+        return {"backend": name, "reason": reason, "available": name is not None}
+
+    def pick_async(self, track_i: int, multiple: bool, start_dir=None):
+        """Return a request id at once; the dialog runs on its own thread.
+
+        The HTTP request must not be held open waiting for a human, so the
+        result comes back over the WebSocket that is already there.
+        """
+        self._pick_seq += 1
+        req = self._pick_seq
+        info = self.pick_backend()
+        if not info["available"]:
+            self.hub.text({"op": "picked", "req": req, "track": track_i,
+                           "paths": [], "cancelled": False,
+                           "error": info["reason"]})
+            return req, info
+        threading.Thread(target=self._pick, daemon=True,
+                         args=(req, track_i, multiple, start_dir)).start()
+        return req, info
+
+    def _pick(self, req, track_i, multiple, start_dir):
+        paths, cancelled, err = picker.pick(
+            multiple=multiple, start_dir=start_dir or self.roots[0])
+        for p in paths:
+            self._grant(p)          # granted before the client can ask to load
+        self.hub.text({"op": "picked", "req": req, "track": track_i,
+                       "paths": paths, "cancelled": cancelled, "error": err})
 
     def browse(self, d):
         d = os.path.realpath(os.path.expanduser(d or self.roots[0]))
@@ -142,6 +192,9 @@ class App:
                                            "run is allowed to read." % path)
             self.meta.setdefault(i, {})["error"] = ""
             self.loader.load_async(i, path, int(msg.get("slices", 16)))
+        elif op == "pick":
+            self.pick_async(int(msg.get("i", 0)), bool(msg.get("multiple")),
+                            msg.get("dir"))
         elif op == "load_kit":
             self.load_kit(msg["dir"])
         elif op == "unload":

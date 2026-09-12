@@ -41,6 +41,8 @@ function codeOf(e) {
 }
 
 let ws = null, S = null, focus = 0, padMode = null;
+let awaitingPick = null;   // track index whose slot is waiting on the dialog
+let localError = '';       // picker trouble, shown where engine errors go
 
 /* Control round trip: input -> socket -> audio thread -> telemetry -> here.
    The engine stamps `probe` inside the callback itself, so an id coming back
@@ -120,7 +122,9 @@ paints its own result locally instead of waiting for the engine to answer.`);
   };
   ws.onmessage = (ev) => {
     if (typeof ev.data === 'string') {
-      S = JSON.parse(ev.data);
+      const msg = JSON.parse(ev.data);
+      if (msg.op === 'picked') { onPicked(msg); return; }
+      S = msg;
       if (S.probe_id === probe.id && probe.sentAt) {
         // A probe is answered by the next telemetry frame, so one reading
         // carries up to a whole pump period of jitter. The median of the last
@@ -253,6 +257,67 @@ function setFocus(i) {
 }
 
 /* ── pads ───────────────────────────────────────────────────────────── */
+/* The dialog is a human at an OS window, so the HTTP call returns at once and
+   the chosen path arrives later on the socket. The slot is marked waiting
+   before the request goes out — feedback before logic, same as every control. */
+async function openPicker(multiple) {
+  if (awaitingPick !== null) return;
+  const target = focus;
+  awaitingPick = target;                       // paint first
+  localError = '';
+  paintAwaiting();
+  try {
+    const r = await fetch(`/api/pick?t=${encodeURIComponent(TOKEN)}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ track: target, multiple: !!multiple }),
+    });
+    const d = await r.json();
+    if (!d.available) { awaitingPick = null; localError = d.reason; paintAwaiting(); }
+  } catch (e) {
+    awaitingPick = null;
+    localError = 'Could not reach the engine to open a file dialog.';
+    paintAwaiting();
+  }
+}
+
+function paintAwaiting() {
+  $$('#strips .strip').forEach((el, k) => {
+    el.classList.toggle('awaiting', k === awaitingPick);
+  });
+}
+
+/* Cancel is a normal outcome: the slot goes back to exactly what it showed. */
+function onPicked(msg) {
+  awaitingPick = null;
+  paintAwaiting();
+  if (msg.error) { localError = msg.error; return; }
+  if (msg.cancelled || !msg.paths.length) return;
+  fillSlots(msg.track, msg.paths);
+}
+
+/* The aimed slot always takes the first file; the rest go to empty slots after
+   it. Running out of slots loads what fits and says so, rather than rejecting. */
+function fillSlots(start, paths) {
+  const n = S ? S.tracks.length : 8;
+  const used = [];
+  let slot = start;
+  for (const path of paths) {
+    if (slot === null) break;
+    send({ op: 'load', i: slot, path });
+    used.push(slot);
+    slot = null;
+    for (let i = 0; i < n; i++) {
+      if (!S.tracks[i].loaded && !used.includes(i)) { slot = i; break; }
+    }
+  }
+  if (used.length < paths.length) {
+    localError = `Loaded ${used.length} of ${paths.length} files — `
+               + `the other ${paths.length - used.length} had no free track. `
+               + `Eject something and pick again.`;
+  }
+  return used.length;
+}
+
 function triggerPad(i) {
   const el = $$('#padgrid .pad')[i];
   const q = S && S.pads[i] && S.pads[i].q;
@@ -329,7 +394,9 @@ function renderState() {
     if (!el) return;
     el.classList.toggle('empty-row', !t.loaded);
     el.classList.toggle('playing', t.playing);
-    setText(el.querySelector('.c-name'), t.loaded ? t.name : 'empty');
+    setText(el.querySelector('.c-name'),
+            i === awaitingPick ? 'waiting for the file dialog'
+                               : (t.loaded ? t.name : 'empty'));
     setText(el.querySelector('.c-bpm'), t.loaded ? fx(t.bpm, 1) : '—');
     setText(el.querySelector('.c-len'),
             t.loaded ? fx(loopBeats(t), 2) + ' b' : '—');
@@ -401,7 +468,8 @@ function renderInspector() {
     : 'no file');
 
   const err = $('#i-error');
-  if (m.error) { err.hidden = false; err.textContent = m.error; }
+  if (localError) { err.hidden = false; setText(err, localError); }
+  else if (m.error) { err.hidden = false; err.textContent = m.error; }
   else if (S.error) { err.hidden = false; err.textContent = S.error; }
   else err.hidden = true;
 
@@ -687,6 +755,7 @@ const ACT = {
   },
   reslice: () => send({ op: 'reslice', i: focus, n: 16 }),
   browse:  () => openBrowser(),
+  pick:    () => openPicker(true),
   unload:  () => send({ op: 'unload', i: focus }),
   mappads: () => send({ op: 'pads.map', track: focus, mode: padMode }),
   'b-up':  () => browseTo($('#b-dir').dataset.up || ''),
@@ -750,7 +819,9 @@ window.addEventListener('keydown', (e) => {
     case 'KeyT': send({ op: 'tap' }); break;
     case 'KeyG': ACT.quantum(); break;
     case 'KeyB': markQueued(focus, 'REV'); send({ op: 'track.rev', i: focus }); break;
-    case 'KeyL': e.preventDefault(); openBrowser(); break;
+    case 'KeyL': e.preventDefault();
+      if (e.shiftKey) openPicker(true); else openBrowser();
+      break;
     case 'Tab': {
       e.preventDefault();
       const n = S ? S.tracks.length : 8;
