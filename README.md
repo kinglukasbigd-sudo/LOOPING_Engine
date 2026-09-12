@@ -26,10 +26,12 @@ If your system Python is externally managed (PEP 668), vendor them next to
 pip install --target .pylibs -r requirements.txt
 ```
 
-PortAudio is a system library. pip does not ship it on Linux:
+PortAudio is a system library. pip does not ship it on Linux, so check before
+installing — many desktops already have it as a dependency of something else:
 
 ```bash
-sudo apt install libportaudio2        # Debian / Ubuntu
+python3 -c "import sounddevice; print(sounddevice.get_portaudio_version()[1])"
+sudo apt install libportaudio2        # Debian / Ubuntu, only if that failed
 ```
 
 `sudo dnf install portaudio` on Fedora, `sudo pacman -S portaudio` on Arch.
@@ -155,16 +157,31 @@ measured where it happens:
 
 `queue` is the only stage that moves with load, so it is kept as a rolling
 distribution rather than a constant. Measured over 400 presses arriving at
-arbitrary moments (48 kHz, 256 frames, 5.333 ms per block):
+arbitrary moments, **through PortAudio on a real device** — pipewire default,
+44100 Hz, 256 frames, 5.805 ms per block:
 
 ```
-p0  0.027   p50 2.671   p90 4.919   p100 6.345   mean 2.715 ms
+p0 0.044   p25 1.373   p50 2.921   p75 4.275
+p90 5.046  p99 10.126  p100 10.665           mean 3.060 ms
 ```
+
+| stage | ms |
+|---|---|
+| queue (p95) | 6.500 |
+| block | 5.805 |
+| output (PortAudio) | 5.805 |
+| **press to speaker** | **18.11** |
 
 Mean lands at half a block, which is what uniform arrival against a fixed
-callback should give; 9 of 400 crossed one block period, which is scheduler
-jitter. `python -m tests.test_engine` asserts the mean stays inside 0.3–0.7 of
-a block and the worst case inside two.
+callback should give. The tail is worse than a wall-clock backend: p99 reaches
+10.1 ms, nearly two block periods, which is real scheduler behaviour under a
+real audio thread and the reason the test asserts two blocks rather than one.
+`python -m tests.test_engine` pins the mean inside 0.3–0.7 of a block and the
+worst case inside two.
+
+Nothing in that table is nominal any more. An earlier version of this file
+published `output_ms: 5.333` from a wall-clock backend with no sound card
+attached; that figure was fiction and has been replaced.
 
 Read it three ways:
 
@@ -183,6 +200,38 @@ coming back proves the audio thread saw it rather than that the socket
 delivered it. Timing the send itself would measure nothing — it returns long
 before anything happens, the same way `AudioBufferSourceNode.start()` returns
 before a sample is heard.
+
+## Measured on hardware
+
+The engine ran for a long time against a wall-clock backend with no sound card,
+which meant every DSP claim rested on the offline renderer. It has now been run
+through PortAudio on a real device (pipewire default, 44100 Hz), with the
+callback output teed to disk so the exact signal the device consumed could be
+analysed.
+
+**Rate conversion under load.** A 48 kHz loop of 20000 samples played on a
+44100 Hz device is 18375 output samples — a ratio of 0.91875, so the
+interpolator is working on every sample. The seam recurred at exactly that
+period across a 12.5 s capture.
+
+**The crossfade, on real output.** A click is a step far larger than the
+material's own slope, so the seam is judged against the step distribution of
+the same recording away from the seam:
+
+| | step at the seam | p99 elsewhere | ratio |
+|---|---|---|---|
+| crossfade off | 0.1357 | 0.0090 | 15.1× |
+| crossfade 10 ms | 0.0292 | 0.0087 | 3.4× |
+
+The crossfade cuts the discontinuity by 4.6×. What is left, 0.0292, is just
+above the bass line's own largest transient of 0.0251 — comparable to material
+already in the file. 0 xruns, 0 clips across the capture.
+
+**What is still unverified: nobody has listened.** These are measurements, not
+judgements. `max |diff|` is useless as a click metric on broadband material —
+a hi-hat at 44.1 kHz legitimately swings full scale between adjacent samples,
+and an earlier pass of this analysis produced meaningless numbers for exactly
+that reason. The captures are the honest artefact; a person has to play them.
 
 ## Craft contract
 
