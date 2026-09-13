@@ -28,6 +28,10 @@ def main(argv=None):
     ap.add_argument("--empty", action="store_true",
                     help="start with no audio loaded")
     ap.add_argument("--no-browser", action="store_true")
+    ap.add_argument("--measure-output", action="store_true",
+                    help="measure the output stage by loopback instead of "
+                         "trusting the backend's block arithmetic; needs a "
+                         "duplex device and takes a few seconds")
     ap.add_argument("--offline", action="store_true",
                     help="run without a sound card — the panel, meters and "
                          "scope still work, you just can't hear it")
@@ -110,14 +114,39 @@ def main(argv=None):
         engine.post("transport.bpm", v=124.0)
         app.map_pads(min(4, args.tracks - 1), "ONE")
 
+    if args.measure_output and not args.offline:
+        from . import loopback
+        print("measuring the output stage by loopback…")
+        try:
+            engine.stop()
+            m = loopback.round_trip(samplerate=engine.sr,
+                                    blocksize=engine.blocksize, device=dev)
+            engine.output_ms_measured = m["one_way_ms"]
+            engine.output_measurement = m
+            engine.start()
+            print("  round trip %.3f ms over %d agreeing repeats (spread %.3f ms)"
+                  % (m["round_trip_ms"], m["reps_agreed"], m["spread_ms"]))
+            print("  one way    %.3f ms   assuming %s" % (m["one_way_ms"], m["assumes"]))
+            print("  path       %s" % m["path"])
+            print("  backend said %.3f ms — %s"
+                  % (m["reported_out_ms"],
+                     "agrees" if abs(m["reported_out_ms"] - m["one_way_ms"]) < 0.5
+                     else "understates by %.3f ms" % (m["one_way_ms"] - m["reported_out_ms"])))
+        except Exception as e:
+            print("  could not measure: %s" % e)
+            print("  OUT stays the backend's reported figure, labelled as such")
+            if engine.stream is None:
+                engine.start()
+
     lat = engine.latency()
     print("LOOP ENGINE %s" % __import__("loopengine").__version__)
     print("  device     %s" % engine.device_name)
     print("  rate       %d Hz, %d frames/block" % (engine.sr, engine.blocksize))
-    print("  path       block %.2f ms + output %.2f ms = %.2f ms to the speaker"
+    print("  path       block %.2f ms + output %.2f ms = %.2f ms fixed"
           % (lat["block_ms"], lat["output_ms"],
              lat["block_ms"] + lat["output_ms"]))
-    print("             queue and wire are measured live — the panel shows CTRL")
+    print("  output     %s" % lat["output_ms_source"])
+    print("             queue is measured live; the panel shows CTRL and OUT")
     print("  panel      %s" % server.url)
     if kit and not args.empty:
         print("  loaded     %s" % kit)

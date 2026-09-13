@@ -100,9 +100,12 @@ class Engine:
         self._lat_i = 0
         self._lat_n = 0
         self.probe_id = 0     # bounced back through telemetry, see App.handle
-        self.output_ms = 0.0  # latched when the stream opens: PortAudio only
-                              # reports it on a live stream, but the figure is
-                              # still the truth about the path after a stop
+        # PortAudio's figure, latched when the stream opens. It is block
+        # arithmetic, not a measurement — see loopback.py — so it is named for
+        # what it is and never silently presented as the truth.
+        self.output_ms_reported = 0.0
+        self.output_ms_measured = None     # set by a loopback run, if one ran
+        self.output_measurement = None     # the full result, method and all
 
         self._mix = np.zeros((blocksize, 2), dtype=np.float32)
         self._k = np.arange(blocksize, dtype=np.float64)
@@ -122,7 +125,7 @@ class Engine:
         if self.offline:
             self.stream = NullStream(self)
             self.stream.start()
-            self.output_ms = self.stream.latency * 1000.0
+            self.output_ms_reported = self.stream.latency * 1000.0
             return self
         self.stream = self.sd.OutputStream(
             samplerate=self.sr, blocksize=self.blocksize, device=self.device,
@@ -130,7 +133,7 @@ class Engine:
             latency="low",
         )
         self.stream.start()
-        self.output_ms = self.stream.latency * 1000.0
+        self.output_ms_reported = self.stream.latency * 1000.0
         return self
 
     def stop(self):
@@ -456,20 +459,40 @@ class Engine:
         """
         block_ms = self.blocksize / float(self.sr) * 1000.0
         st = self.stream
-        out_ms = (st.latency * 1000.0) if st else self.output_ms
+        reported = (st.latency * 1000.0) if st else self.output_ms_reported
+        measured = self.output_ms_measured
+        out_ms = measured if measured is not None else reported
         v = self._lat[:self._lat_n] if self._lat_n else np.zeros(1, np.float32)
-        q50, q95 = (float(np.percentile(v, 50)), float(np.percentile(v, 95)))
+        q = {k: float(np.percentile(v, k)) for k in (50, 95, 99)}
+        mean = float(v.mean())
+        fixed = block_ms + out_ms
         return {
             "samplerate": self.sr,
             "blocksize": self.blocksize,
             "block_ms": round(block_ms, 3),
-            "output_ms": round(out_ms, 3),
-            "queue_p50_ms": round(q50, 3),
-            "queue_p95_ms": round(q95, 3),
+
+            # Named so the two can never be confused for one another.
+            "output_ms_reported": round(reported, 3),
+            "output_ms_measured": (None if measured is None
+                                   else round(measured, 3)),
+            "output_ms_source": ("measured by loopback" if measured is not None
+                                 else "backend-reported: block arithmetic, "
+                                      "NOT a measurement"),
+            "output_ms": round(out_ms, 3),        # whichever is authoritative
+
+            "queue_mean_ms": round(mean, 3),
+            "queue_p50_ms": round(q[50], 3),
+            "queue_p95_ms": round(q[95], 3),
+            "queue_p99_ms": round(q[99], 3),
             "queue_max_ms": round(float(v.max()), 3),
             "samples": int(self._lat_n),
-            # what a pad hit costs with the quantiser off
-            "press_to_speaker_ms": round(q95 + block_ms + out_ms, 2),
+
+            # Two totals, each labelled. The single figure that used to sit
+            # here was built on p95 and printed beside the mean, which reads
+            # as a mean and gets repeated as one.
+            "press_to_speaker_mean_ms": round(mean + fixed, 2),
+            "press_to_speaker_p95_ms": round(q[95] + fixed, 2),
+
             "quantum_ms": round(
                 self.transport.spb * self.transport.quantum_beats
                 / self.sr * 1000.0, 1),
@@ -503,7 +526,10 @@ class Engine:
             "sr": self.sr,
             "blocksize": self.blocksize,
             "device": self.device_name,
-            "latency_ms": round((st.latency * 1000.0) if st else self.output_ms, 2),
+            "latency_ms": round(
+                self.output_ms_measured if self.output_ms_measured is not None
+                else ((st.latency * 1000.0) if st else self.output_ms_reported), 2),
+            "latency_measured": self.output_ms_measured is not None,
             "queue_ms": round(float(self._lat[:self._lat_n].max())
                               if self._lat_n else 0.0, 2),
             "probe_id": self.probe_id,

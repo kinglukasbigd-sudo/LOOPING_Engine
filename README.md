@@ -156,32 +156,70 @@ measured where it happens:
 | quantum | 0 … one launch quantum | musical, *not* latency |
 
 `queue` is the only stage that moves with load, so it is kept as a rolling
-distribution rather than a constant. Measured over 400 presses arriving at
-arbitrary moments, **through PortAudio on a real device** — pipewire default,
-44100 Hz, 256 frames, 5.805 ms per block:
+distribution. Measured over 400 presses arriving at arbitrary moments, through
+PortAudio on the real device — 44100 Hz, 256 frames, 5.805 ms per block:
 
 ```
 p0 0.044   p25 1.373   p50 2.921   p75 4.275
 p90 5.046  p99 10.126  p100 10.665           mean 3.060 ms
 ```
 
-| stage | ms |
-|---|---|
-| queue (p95) | 6.500 |
-| block | 5.805 |
-| output (PortAudio) | 5.805 |
-| **press to speaker** | **18.11** |
-
 Mean lands at half a block, which is what uniform arrival against a fixed
-callback should give. The tail is worse than a wall-clock backend: p99 reaches
-10.1 ms, nearly two block periods, which is real scheduler behaviour under a
-real audio thread and the reason the test asserts two blocks rather than one.
-`python -m tests.test_engine` pins the mean inside 0.3–0.7 of a block and the
-worst case inside two.
+callback gives. p99 reaches nearly two block periods, which is real scheduler
+behaviour under a real audio thread, and is why the test asserts two.
 
-Nothing in that table is nominal any more. An earlier version of this file
-published `output_ms: 5.333` from a wall-clock backend with no sound card
-attached; that figure was fiction and has been replaced.
+### Two totals, both labelled
+
+A single press-to-speaker figure is misleading, because the one worth quoting
+is built on the tail and gets repeated as if it were an average. Both are
+published, in `/api/latency`, in the console report and in the header:
+
+| | queue | + block | + output | total |
+|---|---|---|---|---|
+| at the **mean** queue wait | 3.060 | 5.805 | 9.169 | **18.03 ms** |
+| at the **p95** queue wait | 6.500 | 5.805 | 9.169 | **21.47 ms** |
+
+The header shows the p95 one and says so in the label: `PATH p95`.
+
+### The output stage is measured, not reported
+
+PortAudio's stream latency is not a measurement. Opening the stream at several
+sizes shows it tracking `blocksize / rate` exactly:
+
+| block | rate | block_ms | reported | ratio |
+|---|---|---|---|---|
+| 128 | 44100 | 2.9025 | 8.7075 | 3.000 |
+| 256 | 44100 | 5.8050 | 5.8050 | **1.000** |
+| 512 | 44100 | 11.6100 | 11.6100 | **1.000** |
+| 256 | 48000 | 5.3333 | 10.6667 | 2.000 |
+
+It is `max(one block, the device's advertised figure rounded up to whole
+blocks)`. At the operating point it collapses to exactly one block — it
+restates the block size and says nothing about the device.
+
+`--measure-output` measures it instead: a 5 ms chirp emitted at a known output
+frame, recorded on a duplex stream, located by cross-correlation.
+
+```
+round trip 18.337 ms over 6 agreeing repeats (spread 0.023 ms)
+one way     9.169 ms   assuming input and output stages are symmetric
+backend said 5.805 ms — understates by 3.364 ms
+```
+
+Two caveats carried in the output itself, not buried here. The deltas have no
+jitter across repeats, so the path is **digital — a graph loop, not a DAC**:
+it excludes analog conversion, cable and air. And one direction is half the
+round trip, which assumes the two stages are symmetric.
+
+Without a measurement the field is named `output_ms_reported` and the header
+value carries a trailing `?`. A labelled unknown beats a confident wrong
+number.
+
+**Run at 48000 if you can.** The hardware substream on this machine runs at
+48000 with 1024-frame periods regardless of what the engine asks for, so
+opening at 44100 puts an ALSA resampler in the path and undoes the engine's
+own never-resample property. At 48000 the loopback and the backend's figure
+agree exactly (1024 frames, 21.333 ms round trip).
 
 Read it three ways:
 

@@ -49,6 +49,7 @@ let localError = '';       // picker trouble, shown where engine errors go
    proves the audio thread saw it — not just that the socket delivered it.
    Timing send() would measure nothing: it returns before anything happens. */
 const probe = { id: 0, sentAt: 0, ms: null, hist: [] };
+let pathP95 = null;   // press-to-speaker at p95, refreshed with the report
 function sendProbe() {
   if (!ws || ws.readyState !== 1) return;
   probe.id = (probe.id % 30000) + 1;
@@ -100,14 +101,18 @@ function connect() {
     try {
       const r = await fetch(`/api/latency?t=${encodeURIComponent(TOKEN)}`);
       const L = await r.json();
+      pathP95 = L.press_to_speaker_p95_ms;
       console.log(
 `LOOP ENGINE — press-to-speaker path (${L.backend} backend, ${L.samplerate} Hz)
-  queue   ${L.queue_p50_ms.toFixed(2)} ms median, ${L.queue_p95_ms.toFixed(2)} p95   post() -> picked up by the callback
-  block   ${L.block_ms.toFixed(2)} ms              ${L.blocksize} frames
-  output  ${L.output_ms.toFixed(2)} ms              callback -> speaker
+  queue   mean ${L.queue_mean_ms.toFixed(2)}  p50 ${L.queue_p50_ms.toFixed(2)}  p95 ${L.queue_p95_ms.toFixed(2)}  p99 ${L.queue_p99_ms.toFixed(2)} ms
+          post() -> picked up by the callback; the only stage that moves
+  block   ${L.block_ms.toFixed(2)} ms   ${L.blocksize} frames
+  output  ${L.output_ms.toFixed(2)} ms   ${L.output_ms_source}
+          backend reported ${L.output_ms_reported.toFixed(2)} ms${L.output_ms_measured === null ? '' : `, loopback measured ${L.output_ms_measured.toFixed(2)} ms`}
   ------
-  total   ${L.press_to_speaker_ms.toFixed(2)} ms with the quantiser off
-  quantum ${L.quantum_ms.toFixed(0)} ms            musical wait, not latency
+  total   ${L.press_to_speaker_mean_ms.toFixed(2)} ms  at the MEAN queue wait
+  total   ${L.press_to_speaker_p95_ms.toFixed(2)} ms  at the p95 queue wait  <- the header shows this one
+  quantum ${L.quantum_ms.toFixed(0)} ms   musical wait, not latency
 
 CTRL in the header is a different path: press -> engine -> telemetry -> panel,
 so it carries the 30 Hz pump and is roughly 20 ms. That is why every control
@@ -378,7 +383,10 @@ function renderState() {
   setText($('#h-device'), S.device);
   setText($('#h-rate'), S.sr + ' Hz');
   setText($('#h-block'), S.blocksize);
-  setText($('#h-lat'), fx(S.latency_ms, 1) + ' ms');
+  /* A trailing ? means the backend reported this rather than anything
+     measuring it. The console report on connect spells out which. */
+  setText($('#h-lat'), fx(S.latency_ms, 1) + ' ms' + (S.latency_measured ? '' : '?'));
+  setText($('#h-path'), pathP95 === null ? '—' : fx(pathP95, 2) + ' ms');
   setText($('#h-ctrl'), probe.ms === null ? '—' : fx(probe.ms, 1) + ' ms');
   setText($('#h-cpu'), fx(S.cpu, 1) + ' %');
   setText($('#h-xrun'), S.xruns);

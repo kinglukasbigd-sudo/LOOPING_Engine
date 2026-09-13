@@ -75,7 +75,8 @@ html, body {
 #h-rate  { width:  8ch; }   /* 48000 Hz */
 #h-block { width:  4ch; }   /* 1024     */
 #h-ctrl  { width:  7ch; }   /* 12.3 ms  */
-#h-lat   { width:  7ch; }   /* 12.3 ms  */
+#h-lat   { width:  8ch; }   /* 12.3 ms, or 5.8 ms? when only reported */
+#h-path  { width:  8ch; }   /* 18.11 ms — p95, said so in the label     */
 #h-cpu   { width:  7ch; }   /* 100.0 %  */
 #h-xrun  { width:  4ch; }
 #h-clip  { width:  4ch; }

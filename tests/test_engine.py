@@ -252,10 +252,46 @@ def t_latency_budget():
     check("the reported path survives the stream closing",
           after_stop == out_live and out_live > 0,
           "%.3f ms live, %.3f ms after stop" % (out_live, after_stop))
-    check("the budget adds up",
-          abs(lat["press_to_speaker_ms"]
-              - (lat["queue_p95_ms"] + lat["block_ms"] + lat["output_ms"])) < 0.02,
-          "%.2f ms total" % lat["press_to_speaker_ms"])
+    fixed = lat["block_ms"] + lat["output_ms"]
+    check("the p95 total adds up",
+          abs(lat["press_to_speaker_p95_ms"] - (lat["queue_p95_ms"] + fixed)) < 0.02,
+          "%.2f ms" % lat["press_to_speaker_p95_ms"])
+    check("the mean total adds up",
+          abs(lat["press_to_speaker_mean_ms"] - (lat["queue_mean_ms"] + fixed)) < 0.02,
+          "%.2f ms" % lat["press_to_speaker_mean_ms"])
+    check("the two totals are published separately and differ",
+          lat["press_to_speaker_p95_ms"] > lat["press_to_speaker_mean_ms"],
+          "mean %.2f < p95 %.2f" % (lat["press_to_speaker_mean_ms"],
+                                    lat["press_to_speaker_p95_ms"]))
+    check("an unmeasured output stage says so rather than looking measured",
+          lat["output_ms_measured"] is None
+          and "NOT a measurement" in lat["output_ms_source"]
+          and lat["output_ms"] == lat["output_ms_reported"],
+          lat["output_ms_source"][:38])
+
+
+def t_measured_output_overrides_the_reported_one():
+    """Once a loopback figure exists it must win everywhere, and say so."""
+    e = Engine(samplerate=SR, blocksize=256, offline=True).start()
+    import time as _t
+    _t.sleep(0.2)
+    before = e.latency()
+    e.output_ms_measured = 9.174
+    after = e.latency()
+    snap = e.snapshot()
+    e.stop()
+    check("the reported figure is kept under its own name",
+          after["output_ms_reported"] == before["output_ms_reported"],
+          "%.3f ms" % after["output_ms_reported"])
+    check("the measured figure becomes authoritative",
+          after["output_ms"] == 9.174 and "measured" in after["output_ms_source"],
+          after["output_ms_source"])
+    check("the totals move with it",
+          abs(after["press_to_speaker_p95_ms"] - before["press_to_speaker_p95_ms"]
+              - (9.174 - before["output_ms_reported"])) < 0.02)
+    check("the panel is told which it is",
+          snap["latency_measured"] is True and abs(snap["latency_ms"] - 9.174) < 0.01,
+          "latency_ms %.2f measured=%s" % (snap["latency_ms"], snap["latency_measured"]))
 
 
 def t_probe_reaches_the_audio_thread():
@@ -276,6 +312,7 @@ if __name__ == "__main__":
                t_quantise_lands_on_the_bar, t_quantum_off_is_immediate,
                t_rate_conversion, t_reverse, t_pads_overlap, t_limiter,
                t_analysis, t_no_nans, t_latency_budget,
+               t_measured_output_overrides_the_reported_one,
                t_probe_reaches_the_audio_thread):
         try:
             fn()
