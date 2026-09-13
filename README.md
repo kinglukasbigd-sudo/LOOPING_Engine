@@ -156,70 +156,68 @@ measured where it happens:
 | quantum | 0 … one launch quantum | musical, *not* latency |
 
 `queue` is the only stage that moves with load, so it is kept as a rolling
-distribution. Measured over 400 presses arriving at arbitrary moments, through
-PortAudio on the real device — 44100 Hz, 256 frames, 5.805 ms per block:
+distribution. Measured over 400 presses arriving at arbitrary moments, at the
+default 48000 Hz / 256 frames (5.333 ms per block):
 
 ```
-p0 0.044   p25 1.373   p50 2.921   p75 4.275
-p90 5.046  p99 10.126  p100 10.665           mean 3.060 ms
+p0 0.064   p25 1.706   p50 2.723   p75 3.942
+p90 4.837  p95 5.131   p99 5.260   p100 5.753      mean 2.775 ms
 ```
 
 Mean lands at half a block, which is what uniform arrival against a fixed
-callback gives. p99 reaches nearly two block periods, which is real scheduler
-behaviour under a real audio thread, and is why the test asserts two.
+callback gives, and the tail now sits just over **one** block period. It used
+to reach nearly two — that was the resampler:
+
+| | 44100 (resampler in path) | 48000 (matched) |
+|---|---|---|
+| p99 | 10.126 | **5.260** |
+| max | 10.665 | **5.753** |
+| mean | 3.060 | 2.775 |
 
 ### Two totals, both labelled
 
 A single press-to-speaker figure is misleading, because the one worth quoting
 is built on the tail and gets repeated as if it were an average. Both are
-published, in `/api/latency`, in the console report and in the header:
+published, in `/api/latency`, the console report and the header:
 
 | | queue | + block | + output | total |
 |---|---|---|---|---|
-| at the **mean** queue wait | 3.060 | 5.805 | 9.169 | **18.03 ms** |
-| at the **p95** queue wait | 6.500 | 5.805 | 9.169 | **21.47 ms** |
+| at the **mean** queue wait | 2.775 | 5.333 | 10.667 | **18.78 ms** |
+| at the **p95** queue wait | 5.131 | 5.333 | 10.667 | **21.13 ms** |
 
 The header shows the p95 one and says so in the label: `PATH p95`.
 
 ### The output stage is measured, not reported
 
 PortAudio's stream latency is not a measurement. Opening the stream at several
-sizes shows it tracking `blocksize / rate` exactly:
+sizes shows it tracking `blocksize / rate`:
 
 | block | rate | block_ms | reported | ratio |
 |---|---|---|---|---|
 | 128 | 44100 | 2.9025 | 8.7075 | 3.000 |
 | 256 | 44100 | 5.8050 | 5.8050 | **1.000** |
-| 512 | 44100 | 11.6100 | 11.6100 | **1.000** |
 | 256 | 48000 | 5.3333 | 10.6667 | 2.000 |
 
 It is `max(one block, the device's advertised figure rounded up to whole
-blocks)`. At the operating point it collapses to exactly one block — it
-restates the block size and says nothing about the device.
-
-`--measure-output` measures it instead: a 5 ms chirp emitted at a known output
-frame, recorded on a duplex stream, located by cross-correlation.
+blocks)`. `--measure-output` measures it instead: a 5 ms chirp emitted at a
+known output frame, recorded on a duplex stream, located by cross-correlation.
 
 ```
-round trip 18.337 ms over 6 agreeing repeats (spread 0.023 ms)
-one way     9.169 ms   assuming input and output stages are symmetric
-backend said 5.805 ms — understates by 3.364 ms
+48000/256   round trip 21.3333 ms, 7 of 7 repeats, spread 0.0000 ms
+            one way    10.6667 ms   backend said 10.6667 — agrees exactly
+44100/256   round trip 18.3370 ms, 6 repeats, spread 0.0230 ms
+            one way     9.1690 ms   backend said  5.8050 — understates by 3.364
 ```
 
-Two caveats carried in the output itself, not buried here. The deltas have no
-jitter across repeats, so the path is **digital — a graph loop, not a DAC**:
-it excludes analog conversion, cable and air. And one direction is half the
-round trip, which assumes the two stages are symmetric.
+At the default the backend's arithmetic happens to be right; at 44100 it was
+not. Both caveats travel in the output rather than being buried here: the
+deltas do not jitter across repeats, so the path is **digital — a graph loop,
+not a DAC**, excluding analog conversion, cable and air; and one direction is
+half the round trip, which assumes the stages are symmetric.
 
-Without a measurement the field is named `output_ms_reported` and the header
+Without a measurement the field stays `output_ms_reported` and the header
 value carries a trailing `?`. A labelled unknown beats a confident wrong
 number.
-
-**Run at 48000 if you can.** The hardware substream on this machine runs at
-48000 with 1024-frame periods regardless of what the engine asks for, so
-opening at 44100 puts an ALSA resampler in the path and undoes the engine's
-own never-resample property. At 48000 the loopback and the backend's figure
-agree exactly (1024 frames, 21.333 ms round trip).
 
 Read it three ways:
 
@@ -252,18 +250,34 @@ analysed.
 interpolator is working on every sample. The seam recurred at exactly that
 period across a 12.5 s capture.
 
-**The crossfade, on real output.** A click is a step far larger than the
-material's own slope, so the seam is judged against the step distribution of
-the same recording away from the seam:
+**The crossfade, on real output, at both rates.** A click is a step far larger
+than the material's own slope, so the seam is judged against the step
+distribution of the same recording away from the seam. At 48000 with a 48000
+source the playback step is exactly 1.0, so the interpolator contributes
+nothing and what remains is the crossfade and the material:
 
-| | step at the seam | p99 elsewhere | ratio |
+| | seam step | p99 elsewhere | ratio |
 |---|---|---|---|
-| crossfade off | 0.1357 | 0.0090 | 15.1× |
-| crossfade 10 ms | 0.0292 | 0.0087 | 3.4× |
+| 44100, resampler in path — off | 0.13571 | 0.00897 | 15.14× |
+| 44100, resampler in path — 10 ms | 0.02919 | 0.00865 | 3.37× |
+| **48000, no resampler — off** | 0.13085 | 0.00827 | 15.83× |
+| **48000, no resampler — 10 ms** | **0.02682** | 0.00795 | **3.37×** |
 
-The crossfade cuts the discontinuity by 4.6×. What is left, 0.0292, is just
-above the bass line's own largest transient of 0.0251 — comparable to material
-already in the file. 0 xruns, 0 clips across the capture.
+Reduction 4.65× at 44100, 4.88× at 48000. **The resampler was not a
+significant contributor**: the residue fell about 8% and the ratio against the
+material is identical. The earlier figure was already measuring the crossfade
+alone, so what is left is genuinely the crossfade's, not interpolation error.
+That makes the listening test decisive about the crossfade itself.
+
+**Channel shaping, on a source that actually has width.** `CTR`/`SIDE` only
+mean anything on stereo material; of the demo kit only the keys part has real
+width (side/mid 0.283). Soloed, at 48000:
+
+| | correlation | side/mid |
+|---|---|---|
+| STEREO | +0.851 | 0.283 |
+| CTR | +0.978 | 0.112 |
+| SIDE | −1.000 | mid fully nulled |
 
 **The one xrun was the measuring instrument.** A 28 s capture reported 1 xrun,
 which looked like a real finding. Isolating it across four conditions, three
