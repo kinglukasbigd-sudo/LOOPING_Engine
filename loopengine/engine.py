@@ -72,14 +72,29 @@ class Engine:
             self.sd = None
             self.device_name = "null backend (no PortAudio)"
             self.sr = int(samplerate or 48000)
+            self.native_rate, self.native_how = None, "offline"
         else:
             import sounddevice as sd
+            from . import graph
             self.sd = sd
             info = sd.query_devices(device, "output") if device is not None \
                 else sd.query_devices(sd.default.device[1], "output")
             self.device_name = info["name"]
+            self.native_rate, self.native_how = graph.native_output_rate()
             if samplerate is None:
-                samplerate = int(info["default_samplerate"])
+                # Prefer the rate the graph actually runs at. Opening at the
+                # device's advertised default put a resampler in the path on
+                # this machine — the device says 44100, the sink runs 48000 —
+                # which quietly undoes the engine's never-resample property at
+                # the last hop.
+                def supports(rate):
+                    try:
+                        sd.check_output_settings(device=device, samplerate=rate,
+                                                 channels=2, dtype="float32")
+                        return True
+                    except Exception:
+                        return False
+                samplerate = graph.choose_rate(info["default_samplerate"], supports)
             self.sr = int(samplerate)
 
         self.transport = Transport(self.sr, 124.0)
@@ -584,6 +599,9 @@ class Engine:
             "sr": self.sr,
             "blocksize": self.blocksize,
             "device": self.device_name,
+            "native_rate": self.native_rate,
+            "resampling": bool(self.native_rate
+                               and int(self.native_rate) != int(self.sr)),
             "latency_ms": round(
                 self.output_ms_measured if self.output_ms_measured is not None
                 else ((st.latency * 1000.0) if st else self.output_ms_reported), 2),

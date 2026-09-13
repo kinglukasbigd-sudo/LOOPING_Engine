@@ -381,7 +381,12 @@ function buildPads(n) {
 function renderState() {
   if (!S) return;
   setText($('#h-device'), S.device);
-  setText($('#h-rate'), S.sr + ' Hz');
+  /* A resampler inserted by the sound server is invisible to the user and
+     undoes the engine's never-resample property at the last hop. Say so. */
+  setText($('#h-rate'), S.resampling
+    ? `${S.sr}>${Math.round(S.native_rate / 1000)}k`
+    : S.sr + ' Hz');
+  $('#h-rate').parentElement.classList.toggle('resampling', !!S.resampling);
   setText($('#h-block'), S.blocksize);
   /* A trailing ? means the backend reported this rather than anything
      measuring it. The console report on connect spells out which. */

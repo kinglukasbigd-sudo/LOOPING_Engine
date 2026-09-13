@@ -72,7 +72,9 @@ html, body {
 /* Each box is exactly as wide as its own widest reading, measured in ch of the
    mono face. Wide enough never to move, narrow enough to stay next to its
    label — a single shared width would have spaced the row out. */
-#h-rate  { width:  8ch; }   /* 48000 Hz */
+/* 48000 Hz, or 44100>48k when the graph is resampling underneath us */
+#h-rate  { width: 11ch; }
+.stat.resampling b { text-decoration: underline; }
 #h-block { width:  4ch; }   /* 1024     */
 #h-ctrl  { width:  7ch; }   /* 12.3 ms  */
 #h-lat   { width:  8ch; }   /* 12.3 ms, or 5.8 ms? when only reported */

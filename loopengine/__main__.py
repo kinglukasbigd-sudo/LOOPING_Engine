@@ -142,6 +142,13 @@ def main(argv=None):
     print("LOOP ENGINE %s" % __import__("loopengine").__version__)
     print("  device     %s" % engine.device_name)
     print("  rate       %d Hz, %d frames/block" % (engine.sr, engine.blocksize))
+    if engine.native_rate and int(engine.native_rate) != int(engine.sr):
+        print("  RESAMPLED  the graph runs at %d Hz (%s), so the sound server is"
+              % (engine.native_rate, engine.native_how))
+        print("             resampling every sample. Drop --samplerate to match it.")
+    elif engine.native_rate:
+        print("  graph      %d Hz (%s) — matched, no resampler in the path"
+              % (engine.native_rate, engine.native_how))
     print("  path       block %.2f ms + output %.2f ms = %.2f ms fixed"
           % (lat["block_ms"], lat["output_ms"],
              lat["block_ms"] + lat["output_ms"]))
