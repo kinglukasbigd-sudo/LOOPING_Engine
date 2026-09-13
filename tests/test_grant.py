@@ -142,6 +142,33 @@ def t_offline_matches_live_sample_for_sample():
           "peak %.4f" % float(np.abs(outs[0]).max()))
 
 
+def t_cli_file_mode_enforces_allow():
+    """The boundary must be reachable from the command line, not only the API.
+
+    Directory mode treats the directory argument as the grant, deliberately.
+    Explicit --file arguments carry no implicit grant, so the refusal is
+    exercisable without constructing an Engine by hand.
+    """
+    import subprocess
+    root = ROOT
+    env = dict(os.environ, PYTHONPATH=os.path.join(root, ".pylibs"))
+    r = subprocess.run([sys.executable, "-m", "loopengine.offline",
+                        "--file", OUTSIDE, "/tmp/le-cli-test.wav", "1"],
+                       cwd=root, env=env, capture_output=True, text=True, timeout=120)
+    check("the CLI refuses --file outside --allow", r.returncode == 2,
+          "exit %d" % r.returncode)
+    check("and the refusal names the file on stderr",
+          OUTSIDE in r.stderr and "--allow" in r.stderr, r.stderr.strip()[:56])
+
+    r2 = subprocess.run([sys.executable, "-m", "loopengine.offline",
+                         "--file", OUTSIDE, "--allow", os.path.dirname(OUTSIDE),
+                         "kits/testkit-124", "/tmp/le-cli-test.wav", "1"],
+                        cwd=root, env=env, capture_output=True, text=True, timeout=180)
+    check("and renders it once --allow covers it",
+          r2.returncode == 0 and "Front_Center" in r2.stdout,
+          (r2.stdout or r2.stderr).strip()[:56])
+
+
 def t_restart_gap_is_latent_not_live():
     """No session file exists, so nothing carries a path across a restart.
 
@@ -170,6 +197,7 @@ if __name__ == "__main__":
                t_offline_refuses_outside_and_names_the_file,
                t_offline_accepts_it_when_allowed,
                t_offline_matches_live_sample_for_sample,
+               t_cli_file_mode_enforces_allow,
                t_restart_gap_is_latent_not_live):
         try:
             fn()

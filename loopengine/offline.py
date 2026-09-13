@@ -53,6 +53,18 @@ def load_into(eng, paths, allowed):
 
 
 def build_session(kit_dir, sr=48000, blocksize=256, allow=None):
+    """Directory mode. Naming the directory IS the grant for its contents.
+
+    That is deliberate and is the whole instruction the renderer was given,
+    the same way choosing a file in the OS dialog is the grant on the server.
+    It is stated here because it was previously implicit, which made the
+    boundary unreachable from the command line and easy to mistake for
+    enforcement that was not happening.
+
+    Explicit files go through load_into() instead and must be covered by
+    --allow. Either way a file that may not be read raises; nothing is ever
+    skipped into a silent track.
+    """
     eng = Engine(samplerate=sr, blocksize=blocksize, offline=True).start()
     files = sorted(f for f in os.listdir(kit_dir)
                    if f.lower().endswith((".wav", ".flac", ".mp3", ".ogg",
@@ -69,12 +81,25 @@ def main(argv=None):
         k = argv.index("--allow")
         allow.append(argv[k + 1])
         del argv[k:k + 2]
+    explicit = []
+    while "--file" in argv:
+        k = argv.index("--file")
+        explicit.append(argv[k + 1])
+        del argv[k:k + 2]
+
     kit = argv[0] if argv else "kits/testkit-124"
     out = argv[1] if len(argv) > 1 else "render.wav"
     bars = float(argv[2]) if len(argv) > 2 else 8.0
 
     try:
-        eng, files = build_session(kit, allow=allow)
+        if explicit:
+            # Explicit files carry no implicit grant: every one must be
+            # covered by --allow, and the project root is not assumed.
+            eng = Engine(samplerate=48000, blocksize=256, offline=True).start()
+            load_into(eng, explicit, allow)
+            files = [os.path.basename(f) for f in explicit]
+        else:
+            eng, files = build_session(kit, allow=allow)
     except OutsideAllowed as e:
         print("refused: %s" % e, file=sys.stderr)
         return 2

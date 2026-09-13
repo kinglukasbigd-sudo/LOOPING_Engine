@@ -333,6 +333,70 @@ a hi-hat at 44.1 kHz legitimately swings full scale between adjacent samples,
 and an earlier pass of this analysis produced meaningless numbers for exactly
 that reason. The captures are the honest artefact; a person has to play them.
 
+## Traps
+
+Four things that looked like they worked. Each cost real time, and each
+produces a confident wrong answer rather than an error, which is why they are
+written down rather than left in a commit message.
+
+**A CSS edit that silently did not match.** An edit to `tokens.css` failed to
+apply — the search string had drifted — leaving `--m-state` and `--ease`
+undefined. The `transition` shorthand was then invalid, so every transition
+ran at `0s`. Screenshots looked perfect, because 0 ms motion is invisible, not
+broken. *Read computed values back from the live page after any token edit;
+a diff that applied cleanly is not evidence.*
+
+**Wrapping `_callback` after `start()` does nothing.** PortAudio holds the
+bound method it was constructed with, so reassigning `engine._callback` on a
+running stream records zero frames and reports no error. The first fix for the
+capture problem below hit this and silently captured nothing. *`capture()` is
+inside the callback now, so ordering cannot break it.*
+
+**The capture produced the underrun it was recording.** Copying each block
+into a growing list allocates ~2 kB per callback on the audio thread. Alone it
+survives; combined with decode work elsewhere it drags a garbage collection
+into the callback:
+
+| condition | xruns | blocks |
+|---|---|---|
+| baseline | 0 | 7542 |
+| decode inside the window | 0 | 7607 |
+| capture appending to a list | 0 | 7543 |
+| both together | **3** | 7605 |
+
+*`capture()` allocates one buffer up front. The same worst case then runs
+clean: 0 over 13051 blocks.*
+
+**`pgrep` takes one pattern.** `pgrep -a pipewire wireplumber pulseaudio`
+matches nothing and exits quietly, which produced a confident "pipewire is not
+running" that was wrong and propagated into a later work order. pipewire was
+running the whole time and was the thing inserting the resampler.
+
+## The audio graph underneath
+
+The ALSA hardware substream runs at **48000 Hz with 1024-frame periods**.
+pipewire sits above it and negotiates its graph quantum to whatever the client
+asks — `pw-top` shows our node at 256, 512 or 1024 to match each request — so
+there is no fixed quantum to match and no requantising.
+
+The rate is what matters. The device advertises 44100 while the sink runs
+48000, so opening at the device default put a resampler in the path:
+
+```
+opened at 44100: node 44100 vs sink 48000  ->  RESAMPLER IN PATH
+opened at 48000: node 48000 vs sink 48000  ->  no resampling
+```
+
+That resampler cost real accuracy — it was most of the latency tail (p99
+10.126 → 5.260 ms) — and it quietly undid the engine's never-resample property
+at the last hop. So the engine prefers the graph's rate over the device's
+advertised default, and when it cannot match one it says so: the header reads
+`44100>48k` underlined, and startup prints `RESAMPLED`.
+
+Running at 48000 exercises never-resample in the other direction rather than
+less: a 44.1 kHz file folds 0.91875 into its playback step, which is the
+property working as designed.
+
 ## Craft contract
 
 Four rules the panel holds to, and how each was checked.
@@ -381,10 +445,22 @@ breaks the next reslice or source-mode switch with a refusal the user cannot
 act on, because from where they sit the file is plainly right there.
 Granted-but-unloaded paths are still evictable.
 
-**`offline.py` carries the same boundary.** It used to call `decode()` with no
-root check at all, which made the renderer strictly *more* permissive than the
-server it is supposed to reproduce. It now takes `--allow`, and a file it may
-not read is a hard error naming the file, never a track that renders silent.
+**`offline.py` carries the same boundary — and where it does not, it says so.**
+It used to call `decode()` with no root check at all, which made the renderer
+strictly *more* permissive than the server it reproduces. Now:
+
+- **Directory mode** treats the directory argument as the grant for its
+  contents. That is deliberate — naming the directory is the whole instruction
+  the renderer was given — but it was previously implicit, which made the
+  boundary unreachable from the command line and easy to mistake for
+  enforcement that was not happening.
+- **`--file` arguments carry no implicit grant.** Each must be covered by
+  `--allow`, or the run exits 2 naming the file.
+
+Either way a file that may not be read *raises*. Nothing is skipped into a
+silent track, which was the actual risk. Pinned by
+`tests/test_grant.py::t_offline_refuses_outside_and_names_the_file` and
+`::t_cli_file_mode_enforces_allow`.
 
 **Restart is not yet a question.** Nothing in the project saves or loads a
 session, so no path can go stale across a restart. `tests/test_grant.py`
