@@ -294,6 +294,64 @@ def t_measured_output_overrides_the_reported_one():
           "latency_ms %.2f measured=%s" % (snap["latency_ms"], snap["latency_measured"]))
 
 
+def t_capture_is_preallocated_and_records():
+    """The diagnostic must not cause the fault it is there to measure.
+
+    Appending each block to a list allocates ~2 kB per callback on the audio
+    thread. Measured on real hardware: 0 xruns from that alone and 0 from
+    decode work alone, but 3 over 7605 blocks with both — the capture
+    producing the underrun it was recording. And rebinding _callback after
+    start() records nothing, because PortAudio holds the bound method it was
+    constructed with.
+    """
+    e = Engine(samplerate=SR, blocksize=256, offline=True)
+    buf = e.capture(0.5)
+    check("capture allocates its whole buffer up front",
+          isinstance(buf, np.ndarray) and buf.shape[0] >= SR // 2,
+          "%s" % (buf.shape,))
+    before = buf.__array_interface__["data"][0]
+    e.post("track.load", i=0, buf=np.ones((SR, 2), dtype=np.float32) * 0.4,
+           sr=SR, name="dc", path="", bpm=0.0, conf=0.0,
+           slices=np.zeros(0, dtype=np.int64))
+    e.post("track.gain", i=0, v=1.0)
+    e.post("master.gain", v=1.0)
+    e.post("track.play", i=0)
+    e.render_offline(4096)
+    got = e.end_capture()
+    check("the callback wrote into that same buffer, not a new one",
+          buf.__array_interface__["data"][0] == before)
+    check("it recorded what the callback produced",
+          got is not None and got.shape[0] == 4096
+          and float(np.abs(got).max()) > 0.05,
+          "%d frames, peak %.3f" % (got.shape[0], float(np.abs(got).max())))
+    check("ending the capture releases it",
+          e.end_capture() is None and e._cap_buf is None)
+
+
+def t_xruns_are_timestamped_not_just_counted():
+    """A count cannot tell warm-up from periodic from correlated."""
+    e = Engine(samplerate=SR, blocksize=256, offline=True).start()
+    import time as _t
+    _t.sleep(0.2)
+    check("a clean run reports no xruns at all",
+          e.xrun_report() == [], "%d entries" % len(e.xrun_report()))
+
+    class Flags:                       # what PortAudio hands the callback
+        output_underflow = True
+        output_overflow = False
+        priming_output = False
+        def __bool__(self): return True
+    out = np.zeros((256, 2), dtype=np.float32)
+    e._callback(out, 256, None, Flags())
+    rep = e.xrun_report()
+    e.stop()
+    check("an xrun records when it happened and what it was",
+          len(rep) == 1 and rep[0]["underflow"] is True
+          and rep[0]["priming"] is False and rep[0]["t_s"] >= 0.0,
+          str(rep[0]) if rep else "nothing recorded")
+    check("and which block it landed on", rep and rep[0]["block"] >= 0)
+
+
 def t_probe_reaches_the_audio_thread():
     """A probe id must come back only after the callback itself has seen it."""
     e = Engine(samplerate=SR, blocksize=256, offline=True)
@@ -313,6 +371,8 @@ if __name__ == "__main__":
                t_rate_conversion, t_reverse, t_pads_overlap, t_limiter,
                t_analysis, t_no_nans, t_latency_budget,
                t_measured_output_overrides_the_reported_one,
+               t_capture_is_preallocated_and_records,
+               t_xruns_are_timestamped_not_just_counted,
                t_probe_reaches_the_audio_thread):
         try:
             fn()

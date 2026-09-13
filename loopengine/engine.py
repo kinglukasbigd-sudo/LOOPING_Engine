@@ -115,6 +115,13 @@ class Engine:
         self.clips = 0
         self.xruns = 0
         self.blocks = 0
+        # A counted xrun says nothing. One at the first callback is warm-up;
+        # one every N seconds is a period mismatch; one next to a decode is
+        # work landing on the audio thread. Record when and what.
+        self._xrun_log = []
+        self._t_start = None
+        self._cap_buf = None      # diagnostics: see capture()
+        self._cap_w = 0
         self.last_error = ""
         self.stream = None
 
@@ -122,6 +129,7 @@ class Engine:
     # lifecycle
     # ==================================================================
     def start(self):
+        self._t_start = time.perf_counter()
         if self.offline:
             self.stream = NullStream(self)
             self.stream.start()
@@ -165,6 +173,15 @@ class Engine:
     def _callback(self, outdata, frames, time_info, status):
         if status:
             self.xruns += 1
+            if len(self._xrun_log) < 512:
+                # only allocates when one actually happens
+                self._xrun_log.append((
+                    (time.perf_counter() - self._t_start) if self._t_start else 0.0,
+                    self.blocks,
+                    bool(getattr(status, "output_underflow", False)),
+                    bool(getattr(status, "output_overflow", False)),
+                    bool(getattr(status, "priming_output", False)),
+                ))
         self.blocks += 1
 
         self._drain()
@@ -207,6 +224,14 @@ class Engine:
         np.multiply(mix, 27.0 + x2, out=outdata[:frames])
         outdata[:frames] /= 27.0 + 9.0 * x2
         np.clip(outdata[:frames], -1.0, 1.0, out=outdata[:frames])
+
+        # diagnostic capture, if one is running: one branch, no allocation
+        cb = self._cap_buf
+        if cb is not None:
+            w = self._cap_w
+            if w + frames <= cb.shape[0]:
+                cb[w:w + frames] = outdata[:frames]
+                self._cap_w = w + frames
 
         # scope ring
         take = min(frames, SCOPE_N)
@@ -498,6 +523,39 @@ class Engine:
                 / self.sr * 1000.0, 1),
             "backend": "null" if self.offline else "portaudio",
         }
+
+    def capture(self, seconds):
+        """Start recording what the device consumes, into one preallocated buffer.
+
+        Two traps, both hit while building this. The obvious tee — copy each
+        block into a list — allocates about 2 kB per callback on the audio
+        thread; alone it survives, but combined with decode work elsewhere it
+        drags a garbage collection into the callback and produces exactly the
+        underrun the capture was meant to measure (0 xruns with either alone
+        over ~15000 blocks, 3 with both). And wrapping `self._callback` after
+        start() does nothing at all, because PortAudio holds the bound method
+        it was constructed with — the capture silently records zero frames.
+
+        So the buffer is allocated once here, and the callback itself writes
+        into a slice of it. Works whether the stream is running or not.
+        """
+        n = int(seconds * self.sr) + self.blocksize
+        self._cap_buf = np.zeros((n, 2), dtype=np.float32)
+        self._cap_w = 0
+        return self._cap_buf
+
+    def end_capture(self):
+        """-> the frames actually written, or None if no capture was running."""
+        buf, w = self._cap_buf, self._cap_w
+        self._cap_buf = None
+        self._cap_w = 0
+        return None if buf is None else buf[:w]
+
+    def xrun_report(self):
+        """-> list of dicts, one per recorded xrun."""
+        return [{"t_s": round(t, 4), "block": b, "underflow": u,
+                 "overflow": o, "priming": p}
+                for (t, b, u, o, p) in self._xrun_log]
 
     def _pending_pads(self):
         return {kw.get("i") for op, kw in self._pending if op == "pad.trigger.q"}

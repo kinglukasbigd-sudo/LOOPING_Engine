@@ -265,6 +265,32 @@ The crossfade cuts the discontinuity by 4.6×. What is left, 0.0292, is just
 above the bass line's own largest transient of 0.0251 — comparable to material
 already in the file. 0 xruns, 0 clips across the capture.
 
+**The one xrun was the measuring instrument.** A 28 s capture reported 1 xrun,
+which looked like a real finding. Isolating it across four conditions, three
+repeats each:
+
+| condition | xruns | blocks |
+|---|---|---|
+| baseline, pre-decoded, no capture | 0 | 7542 |
+| decode inside the window | 0 | 7607 |
+| capture appending to a list | 0 | 7543 |
+| **both together** | **3** | 7605 |
+
+Neither cause alone produces one; together they do, at the same point in each
+repeat. The capture was copying every block into a growing list on the audio
+thread — about 2 kB per callback — and with the extra memory pressure from
+decoding in-window a garbage collection lands inside the callback. `capture()`
+now writes into one buffer allocated up front, and the same worst case runs
+clean: 0 xruns over 13051 blocks. Across every run without an appending
+capture, roughly 56000 blocks, zero.
+
+Two traps worth keeping written down. Wrapping `Engine._callback` *after*
+`start()` records nothing at all — PortAudio holds the bound method it was
+constructed with, so the capture silently returns zero frames. And the
+hardware period here is 1024 frames at 48000 while the engine asks for 256 at
+the device rate; that mismatch is real but produced no periodic underruns, so
+the ALSA layer is absorbing it cleanly.
+
 **What is still unverified: nobody has listened.** These are measurements, not
 judgements. `max |diff|` is useless as a click metric on broadband material —
 a hi-hat at 44.1 kHz legitimately swings full scale between adjacent samples,
@@ -305,6 +331,35 @@ or waits for the next run — it never swaps mid-session.
 Depth is contrast, size and spacing only: a runtime sweep finds no shadow, no
 filter, no backdrop-filter, and no translucent panel anywhere. Dimming is
 opacity on leaf text against opaque ground, never a layer over content.
+
+## The grant, and its lifetime
+
+The OS dialog exists to reach folders outside `--root`, so its results cannot
+be judged by the root check. Paths this server itself returned from a
+user-driven dialog are granted individually — never paths a caller supplies —
+bounded to 64. A sibling file in the same directory stays refused.
+
+**Loaded paths are pinned.** Eviction walks oldest-first past any path a track
+is currently holding. Evicting a grant for a file that is loaded and on screen
+breaks the next reslice or source-mode switch with a refusal the user cannot
+act on, because from where they sit the file is plainly right there.
+Granted-but-unloaded paths are still evictable.
+
+**`offline.py` carries the same boundary.** It used to call `decode()` with no
+root check at all, which made the renderer strictly *more* permissive than the
+server it is supposed to reproduce. It now takes `--allow`, and a file it may
+not read is a hard error naming the file, never a track that renders silent.
+
+**Restart is not yet a question.** Nothing in the project saves or loads a
+session, so no path can go stale across a restart. `tests/test_grant.py`
+asserts that absence deliberately: add session save/load and the test fails,
+forcing the grant lifetime to be decided rather than rediscovered.
+
+The test that matters is offline/live equality, because every DSP result rests
+on it. The same outside-root file is loaded once through the server with a
+dialog grant and once through the renderer with `--allow`, run through a
+region change, and compared: **max diff 0.000e+00**, peak 0.2886 — not silence
+being compared against silence.
 
 ## Security
 
