@@ -162,7 +162,10 @@ def t_pads_overlap():
     e.post("track.load", i=0, buf=buf, sr=SR, name="s", path="", bpm=0.0,
            conf=0.0, slices=slices)
     for k in range(4):
-        e.post("pad.assign", i=k, track=0, slice=k, mode="ONE", gain=0.3)
+        # audio now comes through pad.take: a key holds its own buffer
+        e.post("pad.take", i=k, track=0, ls=k * (SR // 16),
+               le=(k + 1) * (SR // 16))
+        e.post("pad.assign", i=k, mode="ONE", gain=0.3)
     e.render_offline(512)
     for k in range(4):
         e.post("pad.trigger", i=k)

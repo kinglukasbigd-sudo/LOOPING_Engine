@@ -41,6 +41,11 @@ function codeOf(e) {
 }
 
 let ws = null, S = null, focus = 0, padMode = null;
+let focusKind = 'track';   // 'track' | 'key' — what the waveform panel edits
+let focusKey = 0;          // which key, when focusKind is 'key'
+let assignArmed = false;   // next key pressed takes the focused track's region
+let editKeys = false;      // clicking a pad focuses it instead of firing it
+const padPeaks = {};       // pad index -> its own envelope
 let awaitingPick = null;   // track index whose slot is waiting on the dialog
 let localError = '';       // picker trouble, shown where engine errors go
 
@@ -146,12 +151,12 @@ paints its own result locally instead of waiting for the engine to answer.`);
     const kind = v.getUint8(0);
     if (kind === 0x10) {                                   // scope
       scope = new Int8Array(ev.data, 4);
-    } else if (kind === 0x11) {                            // peaks
+    } else if (kind === 0x11 || kind === 0x12) {           // peaks
       const t = v.getUint8(1), n = v.getUint16(2);
       const raw = new Int8Array(ev.data, 4, n * 2);
       const f = new Float32Array(n * 2);
       for (let i = 0; i < n * 2; i++) f[i] = raw[i] / 127;
-      peaks[t] = f;
+      if (kind === 0x11) peaks[t] = f; else padPeaks[t] = f;
     }
   };
 }
@@ -178,12 +183,59 @@ let handleFocus = 'in';    // which handle the arrow keys move
    before the digits moved. Write them here instead: the whole visible result
    of the gesture lands before the socket call, not a frame after it. */
 function paintRegion(i, ls, le) {
-  dragLoop = { i, ls, le };
+  dragLoop = { i, ls, le, kind: focusKind };
   setText($('#w-in'), ls.toLocaleString('en-US'));
   setText($('#w-out'), le.toLocaleString('en-US'));
 }
+
+/* One place that knows whether an edit goes to a track or a key. */
+function sendRegion(ls, le) {
+  if (focusKind === 'key') send({ op: 'pad.loop', i: focusKey, ls, le });
+  else send({ op: 'track.loop', i: focus, ls, le });
+}
+
+function assignToKey(k) {
+  const t = S && S.tracks[focus];
+  if (!t || !t.loaded) {
+    localError = 'Nothing to assign — track ' + (focus + 1) + ' is empty.';
+    return;
+  }
+  const [ls, le] = liveLoop(focus, t);
+  const el = $$('#padgrid .pad')[k];
+  if (el) el.classList.add('hit');            // paint first
+  setTimeout(() => el && el.classList.remove('hit'), 160);
+  send({ op: 'pad.take', i: k, track: focus, ls, le });
+  assignArmed = false;
+  $('[data-act="assign"]').setAttribute('aria-pressed', false);
+}
+/* The waveform panel edits a track or a key. Everything downstream reads
+   this rather than reaching into S.tracks, so a key is a first-class subject
+   and not a special case bolted onto the track path. */
+function subject() {
+  if (focusKind === 'key' && S && S.pads[focusKey]) {
+    const p = S.pads[focusKey];
+    return {
+      kind: 'key', i: focusKey, loaded: p.loaded, name: p.name,
+      sr: p.sr, ch: p.ch, frames: p.frames, ls: p.ls, le: p.le,
+      bpm: 0, conf: 0, mode: 'STEREO', speed: p.speed, gain: p.gain,
+      pan: p.pan, rev: p.rev, peak: 0, phase: 0, slices: 0,
+      playing: !!(S.pads_on && S.pads_on[focusKey]), queued: null,
+      analysing: false, xfade: 0, path: p.name,
+      title: 'KEY ' + (PAD_CAPS[focusKey] || focusKey + 1),
+      peaks: padPeaks[focusKey],
+    };
+  }
+  const t = S ? S.tracks[focus] : null;
+  if (!t) return null;
+  return Object.assign({}, t, {
+    kind: 'track', i: focus, peaks: peaks[focus],
+    title: 'TRACK ' + (focus + 1),
+  });
+}
+
 function liveLoop(i, t) {
-  if (dragLoop && dragLoop.i === i) return [dragLoop.ls, dragLoop.le];
+  if (dragLoop && dragLoop.i === i && dragLoop.kind === (t.kind || focusKind))
+    return [dragLoop.ls, dragLoop.le];
   return [t.ls, t.le];
 }
 
@@ -266,11 +318,13 @@ function markQueued(i, label) {
 }
 
 function setFocus(i) {
+  focusKind = 'track';
   focus = Math.max(0, Math.min(i, (S ? S.tracks.length : 8) - 1));
   const rowH = parseInt(css.getPropertyValue('--row-h'), 10);
   const bar = $('#focusbar');
   if (bar) bar.style.transform = `translateY(${focus * rowH}px)`;
   $$('#strips .strip').forEach((el, k) => el.classList.toggle('focused', k === focus));
+  paintKeyFocus();
 }
 
 /* ── pads ───────────────────────────────────────────────────────────── */
@@ -306,6 +360,13 @@ async function openPicker(multiple) {
     localError = 'Could not reach the engine to open a file dialog.';
     paintAwaiting();
   }
+}
+
+function paintKeyFocus() {
+  $$('#padgrid .pad').forEach((el, k) =>
+    el.classList.toggle('editing', editKeys && focusKind === 'key' && k === focusKey));
+  $$('#strips .strip').forEach((el, k) =>
+    el.classList.toggle('focused', focusKind === 'track' && k === focus));
 }
 
 function paintAwaiting() {
@@ -382,7 +443,11 @@ function buildPads(n) {
     b.innerHTML = `<span class="p-key">${PAD_CAPS[i] || i + 1}</span>
                    <span class="p-mode">—</span>
                    <span class="p-label">unassigned</span>`;
-    b.addEventListener('mousedown', () => triggerPad(i));
+    b.addEventListener('mousedown', (e) => {
+      if (assignArmed) return assignToKey(i);
+      if (editKeys) { focusKind = 'key'; focusKey = i; paintKeyFocus(); return; }
+      triggerPad(i);
+    });
     b.addEventListener('mouseup', () => releasePad(i));
     b.addEventListener('mouseleave', () => releasePad(i));
     host.appendChild(b);
@@ -494,20 +559,25 @@ function renderState() {
 }
 
 function renderInspector() {
-  const t = S.tracks[focus];
-  const m = (S.meta && (S.meta[focus] || S.meta[String(focus)])) || {};
-  const queued = settled(`${focus}.queued`, t.queued);
-  const [ls, le] = liveLoop(focus, t);
-  setText($('#i-title'), 'TRACK ' + (focus + 1));
-  setText($('#w-title'), 'TRACK ' + (focus + 1) + (t.loaded ? ' — ' + t.name : ''));
+  const t = subject();
+  if (!t) return;
+  const m = t.kind === 'track'
+    ? ((S.meta && (S.meta[focus] || S.meta[String(focus)])) || {}) : {};
+  const queued = t.kind === 'track'
+    ? settled(`${focus}.queued`, t.queued) : null;
+  const [ls, le] = liveLoop(t.i, t);
+  setText($('#i-title'), t.title);
+  setText($('#w-title'), t.title + (t.loaded ? ' — ' + t.name : ''));
   $$('#w-modes .seg-btn').forEach(b =>
     b.setAttribute('aria-pressed', b.dataset.mode === t.mode));
 
   $('#w-empty').hidden = t.loaded;
   if (!t.loaded) {
-    $('#w-empty').innerHTML =
-      `Track ${focus + 1} is empty. Press <kbd>L</kbd> to pick a file, ` +
-      `or drop one on this panel.`;
+    $('#w-empty').innerHTML = t.kind === 'key'
+      ? `Key ${PAD_CAPS[focusKey]} holds nothing yet. Set a loop on a track, `
+        + `then hold <kbd>CTRL</kbd> and press this key to give it that loop.`
+      : `Track ${focus + 1} is empty. Press <kbd>L</kbd> to pick a file, `
+        + `or drop one on this panel.`;
   }
   const [rls, rle] = liveLoop(focus, t);
   setText($('#w-in'), t.loaded ? rls.toLocaleString('en-US') : '—');
@@ -529,7 +599,8 @@ function renderInspector() {
     : (t.pan < 0 ? 'L' : 'R') + fx(Math.abs(t.pan) * 100, 0);
   const rows = [
     ['file', t.loaded ? t.name : 'empty'],
-    ['path', t.loaded ? t.path.replace(/^.*\/([^/]+\/[^/]+)$/, '…/$1') : '—'],
+    ['holds', t.kind === 'key' ? 'its own copy — survives a track change'
+                               : 'track audio'],
     ['format', t.loaded ? `${t.sr} Hz · ${t.ch} ch` : '—'],
     ['length', t.loaded ? `${t.frames.toLocaleString('en-US')} fr · ${secs(t.frames, t.sr)}` : '—'],
     ['bpm', !t.loaded ? '—'
@@ -565,14 +636,14 @@ function renderInspector() {
 const waveCache = { key: '', dim: null, hot: null };
 
 function waveKey(t, W, H) {
-  return [focus, t.mode, t.frames, W, H, (peaks[focus] || []).length].join(':');
+  return [t.kind, t.i, t.mode, t.frames, W, H,
+          (t.peaks || []).length].join(':');
 }
 
-function plot(W, H, colour) {
+function plot(W, H, colour, pk) {
   const cv = document.createElement('canvas');
   cv.width = W; cv.height = H;                  // transparent ground: ink only
   const g = cv.getContext('2d');
-  const pk = peaks[focus];
   if (pk) {
     const n = pk.length / 2, mid = H / 2;
     g.fillStyle = colour;
@@ -593,8 +664,8 @@ function plot(W, H, colour) {
 function buildWaveCache(t, W, H) {
   const key = waveKey(t, W, H);
   if (waveCache.key !== key) {
-    waveCache.dim = plot(W, H, C.fg);
-    waveCache.hot = plot(W, H, C.accent);
+    waveCache.dim = plot(W, H, C.fg, t.peaks);
+    waveCache.hot = plot(W, H, C.accent, t.peaks);
     waveCache.key = key;
   }
   return waveCache;
@@ -659,9 +730,9 @@ function drawWave() {
   const [g, W, H, r] = fit(cv);
   g.fillStyle = C.bg; g.fillRect(0, 0, W, H);
   if (!S) return;
-  const t = S.tracks[focus];
-  if (!t.loaded) return;
-  const [lsF, leF] = liveLoop(focus, t);
+  const t = subject();
+  if (!t || !t.loaded) return;
+  const [lsF, leF] = liveLoop(t.i, t);
   const x0 = Math.round(lsF / t.frames * W);
   const x1 = Math.round(leF / t.frames * W);
 
@@ -696,7 +767,8 @@ function drawWave() {
   }
 
   // slice markers: aiming points only, they never move a loop point
-  const m = (S.meta && (S.meta[focus] || S.meta[String(focus)])) || {};
+  const m = t.kind === 'track'
+    ? ((S.meta && (S.meta[focus] || S.meta[String(focus)])) || {}) : {};
   if (m.slices) {
     g.fillStyle = C.fg;
     g.globalAlpha = DIM1;
@@ -798,33 +870,34 @@ function frame() {
   let drag = null;
   const xToFrame = (e) => {
     const b = cv.getBoundingClientRect();
-    const t = S.tracks[focus];
+    const t = subject();
+    if (!t) return 0;
     return Math.max(0, Math.min(t.frames,
       Math.round((e.clientX - b.left) / b.width * t.frames)));
   };
   const commit = (ls, le) => {
-    paintRegion(focus, ls, le);                 // paint first, always
-    send({ op: 'track.loop', i: focus, ls, le });
+    paintRegion(subject().i, ls, le);           // paint first, always
+    sendRegion(ls, le);
   };
 
   cv.addEventListener('mousemove', (e) => {
-    if (drag || !S || !S.tracks[focus].loaded) return;
-    const t = S.tracks[focus];
+    const t = subject();
+    if (drag || !t || !t.loaded) return;
     const b = cv.getBoundingClientRect();
     const grab = 8 / b.width * t.frames;
     const f = xToFrame(e);
-    const [ls, le] = liveLoop(focus, t);
+    const [ls, le] = liveLoop(t.i, t);
     cv.style.cursor = (Math.abs(f - ls) < grab || Math.abs(f - le) < grab)
       ? 'col-resize' : 'crosshair';
   });
 
   cv.addEventListener('mousedown', (e) => {
-    if (!S || !S.tracks[focus].loaded) return;
-    const t = S.tracks[focus];
+    const t = subject();
+    if (!t || !t.loaded) return;
     const b = cv.getBoundingClientRect();
     const grab = 8 / b.width * t.frames;
     const f = xToFrame(e);
-    const [ls, le] = liveLoop(focus, t);
+    const [ls, le] = liveLoop(t.i, t);
     if (Math.abs(f - ls) < grab) { drag = { edge: 'in', le }; handleFocus = 'in'; }
     else if (Math.abs(f - le) < grab) { drag = { edge: 'out', ls }; handleFocus = 'out'; }
     else { drag = { edge: 'new', anchor: f }; handleFocus = 'out'; }
@@ -864,24 +937,24 @@ function frame() {
   });
 
   cv.addEventListener('dblclick', () => {
-    if (S) commit(0, S.tracks[focus].frames);
+    const t = subject();
+    if (t && t.loaded) commit(0, t.frames);
   });
 })();
 
 /* Arrows nudge the focused handle. Fine is one pixel of the plot so a press
    is always visible; coarse is a beat of the file's own tempo. */
 function nudgeHandle(dir, coarse) {
-  if (!S) return;
-  const t = S.tracks[focus];
-  if (!t.loaded) return;
+  const t = subject();
+  if (!t || !t.loaded) return;
   const W = $('#wcanvas').getBoundingClientRect().width || 1;
   const step = coarse ? Math.round(beatFrames(t))
                       : Math.max(1, Math.round(t.frames / W));
-  let [ls, le] = liveLoop(focus, t);
+  let [ls, le] = liveLoop(t.i, t);
   if (handleFocus === 'in') ls = Math.min(ls + dir * step, le - 64);
   else le = Math.max(le + dir * step, ls + 64);
-  paintRegion(focus, ls, le);                    // paint first
-  send({ op: 'track.loop', i: focus, ls, le });
+  paintRegion(t.i, ls, le);                      // paint first
+  sendRegion(ls, le);
 }
 
 /* ── buttons ────────────────────────────────────────────────────────── */
@@ -907,6 +980,20 @@ const ACT = {
   pick:    () => openPicker(true),
   unload:  () => send({ op: 'unload', i: focus }),
   mappads: () => send({ op: 'pads.map', track: focus, mode: padMode }),
+  assign: () => {
+    assignArmed = !assignArmed;
+    $('[data-act="assign"]').setAttribute('aria-pressed', assignArmed);
+  },
+  editkeys: () => {
+    editKeys = !editKeys;
+    $('[data-act="editkeys"]').setAttribute('aria-pressed', editKeys);
+    if (!editKeys && focusKind === 'key') setFocus(focus);
+    paintKeyFocus();
+  },
+  clearkey: () => {
+    if (focusKind !== 'key') { localError = 'No key is being edited.'; return; }
+    send({ op: 'pad.clear', i: focusKey });
+  },
   'b-up':  () => browseTo($('#b-dir').dataset.up || ''),
   'b-close': () => closeBrowser(),
 };
@@ -955,6 +1042,8 @@ window.addEventListener('keydown', (e) => {
   }
   if (pi >= 0) {
     e.preventDefault();
+    if (e.ctrlKey || e.metaKey || assignArmed) return assignToKey(pi);
+    if (editKeys) { focusKind = 'key'; focusKey = pi; paintKeyFocus(); return; }
     down.add(code);
     triggerPad(pi);
     return;

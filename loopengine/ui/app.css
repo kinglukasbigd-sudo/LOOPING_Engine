@@ -316,6 +316,10 @@ kbd {
    engine a telemetry tick later and takes over without a visible seam. */
 .pad.hit, .pad.on { background: var(--fg); color: var(--bg); }
 .pad.armed .p-key { color: var(--accent); }        /* ACCENT 2 — queued */
+/* The key the waveform panel is editing. Same marker the focused strip uses,
+   carried on the pad's own edge — nothing floats. */
+.pad.editing { background: var(--n1); }
+.pad.editing .p-key { text-decoration: underline; }
 .pad.unmapped { opacity: var(--dim1); }
 .p-key {
   font-family: var(--font-display); font-weight: 700;

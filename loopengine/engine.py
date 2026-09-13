@@ -17,7 +17,7 @@ import time
 
 import numpy as np
 
-from .track import Track
+from .track import Track, MIN_LOOP
 from .transport import Transport, QUANTA, QUANTUM_LABELS
 from .voice import VoicePool, ONESHOT, LOOP
 
@@ -38,8 +38,26 @@ QUANTIZED = {
 
 
 class Pad:
+    """A key slot. Holds its OWN audio and its own region.
+
+    A pad used to be a live link into a track — `track` plus `slice` — so
+    loading a new file on that track destroyed what the key was pointing at.
+    A key now snapshots the buffer reference and the region at the moment it
+    is assigned, and keeps both until it is reassigned. Changing the track
+    underneath it changes nothing here.
+
+    Ownership is shared by reference: the decoded array stays alive while any
+    track or any key still refers to it, and is freed when the last one lets
+    go. Engine.audio_bytes() counts each distinct buffer once, however many
+    holders it has.
+
+    `track` and `slice` survive only as provenance for the label — nothing
+    reads them at trigger time.
+    """
+
     __slots__ = ("track", "slice", "mode", "gain", "pan", "speed", "quantize",
-                 "label")
+                 "label", "buf", "sr", "channels", "frames", "loop_start",
+                 "loop_end", "name", "path", "reverse")
 
     def __init__(self):
         self.track = -1
@@ -50,17 +68,70 @@ class Pad:
         self.speed = 1.0
         self.quantize = False
         self.label = ""
+        self.buf = None          # the pinned audio, not a track lookup
+        self.sr = 48000
+        self.channels = 0
+        self.frames = 0
+        self.loop_start = 0
+        self.loop_end = 0
+        self.name = ""
+        self.path = ""
+        self.reverse = False
+
+    @property
+    def loaded(self):
+        return self.buf is not None and self.loop_end > self.loop_start
+
+    def assign(self, buf, sr, name, path, ls, le, track=-1, slice_i=-1):
+        self.buf = buf
+        self.sr = int(sr)
+        self.channels = buf.shape[1]
+        self.frames = buf.shape[0]
+        self.name = name
+        self.path = path
+        self.track = track
+        self.slice = slice_i
+        self.set_loop(ls, le)
+
+    def clear(self):
+        self.buf = None          # last reference here; the array may now go
+        self.frames = 0
+        self.loop_start = self.loop_end = 0
+        self.name = ""
+        self.path = ""
+        self.label = ""
+        self.track = -1
+        self.slice = -1
+
+    def set_loop(self, ls, le):
+        """Same guards as a track: a key's region is edited the same way."""
+        if self.buf is None:
+            return
+        ls, le = int(ls), int(le)
+        if le <= ls:
+            le = ls + MIN_LOOP
+        ls = max(0, min(ls, self.frames - MIN_LOOP))
+        le = max(ls + MIN_LOOP, min(le, self.frames))
+        if le - ls < MIN_LOOP:
+            ls = max(0, le - MIN_LOOP)
+        self.loop_start, self.loop_end = ls, le
 
     def snapshot(self, i):
         return {"i": i, "track": self.track, "slice": self.slice,
                 "mode": self.mode, "gain": round(self.gain, 3),
                 "pan": round(self.pan, 3), "q": self.quantize,
-                "label": self.label}
+                "label": self.label, "loaded": self.loaded,
+                "name": self.name, "sr": self.sr, "ch": self.channels,
+                "frames": self.frames, "ls": self.loop_start,
+                "le": self.loop_end, "rev": self.reverse,
+                "speed": round(self.speed, 4),
+                "mb": round((self.buf.nbytes / 1048576.0) if self.buf is not None else 0.0, 1)}
 
 
 class Engine:
     def __init__(self, samplerate=48000, blocksize=256, device=None,
-                 n_tracks=8, n_voices=16, n_pads=16, offline=False):
+                 n_tracks=8, n_voices=16, n_pads=16, offline=False,
+                 memory_mb=1024):
         self.blocksize = blocksize
         self.device = device
         self.offline = offline
@@ -102,6 +173,7 @@ class Engine:
         self.pads = [Pad() for _ in range(n_pads)]
         self.voices = VoicePool(n_voices, blocksize)
 
+        self.memory_limit = memory_mb * 1048576 if memory_mb else 0
         self.master_gain = 0.70
         self._mg = 0.70
         self.cmds = collections.deque()
@@ -338,6 +410,22 @@ class Engine:
 
         if op == "track.load":
             t = self._t(kw)
+            # The ceiling bites here, not at pad.take. Taking from a loaded
+            # track costs nothing — the track already holds that array. Memory
+            # grows when the TRACK moves on and a key keeps the old buffer
+            # alive. So this is the moment to refuse, while the user still has
+            # the old arrangement in front of them to clear.
+            if t is not None and self.would_exceed(kw["buf"]):
+                pinned = sorted({p.name for p in self.pads if p.loaded})
+                self.last_error = (
+                    "No room to load %s. %d MB of audio is held against a %d "
+                    "MB ceiling, and these keys are pinning files the tracks "
+                    "no longer show: %s. Clear a key, or restart with "
+                    "--memory-mb." % (kw.get("name", "that file"),
+                                      self.audio_bytes() // 1048576,
+                                      self.memory_limit // 1048576,
+                                      ", ".join(pinned) or "none"))
+                return
             if t:
                 t.load(kw["buf"], kw["sr"], kw["name"], kw["path"], kw["bpm"],
                        kw["conf"], kw["slices"], kw.get("xfade_ms", 6.0),
@@ -456,11 +544,40 @@ class Engine:
             tr.quantum_i = int(kw["v"]) % len(QUANTA)
 
         elif op == "pad.assign":
+            # Settings only. Audio comes through pad.take.
             p = self.pads[int(kw["i"]) % len(self.pads)]
-            for f in ("track", "slice", "mode", "gain", "pan", "speed",
-                      "quantize", "label"):
+            for f in ("mode", "gain", "pan", "speed", "quantize", "label",
+                      "reverse"):
                 if f in kw:
                     setattr(p, f, kw[f])
+        elif op == "pad.take":
+            # Snapshot a track's CURRENT buffer and region onto a key. A
+            # snapshot, not a link: later edits to the track must not reach
+            # back and change the key.
+            p = self.pads[int(kw["i"]) % len(self.pads)]
+            t = self._t({"i": kw.get("track", -1)})
+            if t is None or t.src is None:
+                self.last_error = "Nothing to assign — that track is empty."
+            elif self.would_exceed(t.buf):
+                self.last_error = (
+                    "Not enough room to pin %s to a key. %d MB of audio is "
+                    "already held and the ceiling is %d MB. Eject a track or "
+                    "clear a key, or raise it with --memory-mb."
+                    % (t.name, self.audio_bytes() // 1048576,
+                       self.memory_limit // 1048576))
+            else:
+                ls = int(kw.get("ls", t.loop_start))
+                le = int(kw.get("le", t.loop_end))
+                p.assign(t.buf, t.sr, t.name, t.path, ls, le,
+                         track=t.index, slice_i=int(kw.get("slice", -1)))
+                p.label = kw.get("label") or "%s" % t.name.split(".")[0][:12]
+                self.last_error = ""
+        elif op == "pad.loop":
+            p = self.pads[int(kw["i"]) % len(self.pads)]
+            p.set_loop(kw["ls"], kw["le"])
+        elif op == "pad.clear":
+            self.voices.kill_pad(int(kw["i"]))
+            self.pads[int(kw["i"]) % len(self.pads)].clear()
         elif op in ("pad.trigger", "pad.trigger.q"):
             self._trigger_pad(int(kw["i"]))
         elif op == "pad.release":
@@ -478,32 +595,59 @@ class Engine:
             self.xruns = 0
 
     def _trigger_pad(self, pi):
+        """Plays the key's own audio. No track is consulted."""
         if not (0 <= pi < len(self.pads)):
             return
         p = self.pads[pi]
-        if not (0 <= p.track < len(self.tracks)):
-            return
-        t = self.tracks[p.track]
-        buf = t.buf
-        if buf is None:
+        if not p.loaded:
             return
         if p.mode == LOOP and self.voices.pad_active(pi):
             self.voices.kill_pad(pi)
             return
-        if p.slice < 0 or t.slices.size == 0:
-            s, e = t.loop_start, t.loop_end
-        else:
-            k = p.slice % t.slices.size
-            s = int(t.slices[k])
-            e = int(t.slices[k + 1]) if k + 1 < t.slices.size else t.frames
+        step = p.speed * (p.sr / float(self.sr))
+        if p.reverse:
+            step = -step
         v = self.voices.alloc()
-        v.start_note(pi, buf, t.sr, s, e,
-                     p.speed * (t.sr / float(self.sr)), p.gain, p.pan,
-                     p.mode, self.sr)
+        v.start_note(pi, p.buf, p.sr, p.loop_start, p.loop_end,
+                     step, p.gain, p.pan, p.mode, self.sr)
 
     # ==================================================================
     # telemetry
     # ==================================================================
+    def audio_bytes(self):
+        """Decoded audio held alive, counting each distinct buffer once.
+
+        A buffer shared by a track and three keys costs what one costs. This
+        is why the ceiling is checked against unique arrays rather than a sum
+        over holders.
+        """
+        seen = {}
+        for t in self.tracks:
+            for b in t.variants.values():
+                if b is not None:
+                    seen[id(b)] = b.nbytes
+        for p in self.pads:
+            if p.buf is not None:
+                seen[id(p.buf)] = p.buf.nbytes
+        return sum(seen.values())
+
+    def would_exceed(self, buf):
+        """True if pinning `buf` would cross the ceiling and it is not already
+        held. Refusing is better than an OOM the user cannot interpret."""
+        if self.memory_limit <= 0:
+            return False
+        held = {}
+        for t in self.tracks:
+            for b in t.variants.values():
+                if b is not None:
+                    held[id(b)] = b.nbytes
+        for p in self.pads:
+            if p.buf is not None:
+                held[id(p.buf)] = p.buf.nbytes
+        if id(buf) in held:
+            return False
+        return sum(held.values()) + buf.nbytes > self.memory_limit
+
     def latency(self):
         """The press-to-speaker budget, stage by stage, in ms.
 
@@ -652,6 +796,8 @@ class Engine:
                       round(float(self.master_peak[1]), 4)],
             "voices": self.voices.used(),
             "voices_max": len(self.voices.voices),
+            "audio_mb": round(self.audio_bytes() / 1048576.0, 1),
+            "audio_limit_mb": round(self.memory_limit / 1048576.0, 0),
             "error": self.last_error,
             "tracks": [t.snapshot() for t in self.tracks],
             "pads": [p.snapshot(i) for i, p in enumerate(self.pads)],

@@ -27,6 +27,7 @@ UI_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui")
 
 BIN_SCOPE = 0x10
 BIN_PEAKS = 0x11
+BIN_PEAKS_PAD = 0x12
 
 OP_CONT, OP_TEXT, OP_BIN, OP_CLOSE, OP_PING, OP_PONG = 0x0, 0x1, 0x2, 0x8, 0x9, 0xA
 
@@ -146,10 +147,14 @@ class Hub:
     def text(self, obj):
         self.broadcast(OP_TEXT, json.dumps(obj, separators=(",", ":")).encode())
 
-    def peaks(self, track_i, arr: np.ndarray):
+    def peaks(self, track_i, arr: np.ndarray, kind=BIN_PEAKS):
         q = np.clip(arr * 127.0, -127, 127).astype(np.int8)
-        head = struct.pack("!BBH", BIN_PEAKS, track_i & 0xFF, q.shape[0])
+        head = struct.pack("!BBH", kind, track_i & 0xFF, q.shape[0])
         self.broadcast(OP_BIN, head + q.tobytes())
+
+    def pad_peaks(self, pad_i, arr: np.ndarray):
+        """A key keeps its own envelope: the track it came from may be gone."""
+        self.peaks(pad_i, arr, kind=BIN_PEAKS_PAD)
 
 
 # ---------------------------------------------------------------------------

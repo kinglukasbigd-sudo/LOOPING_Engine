@@ -11,7 +11,7 @@ import numpy as np
 
 from . import picker
 from .loader import Loader, AUDIO_EXT
-from .server import Hub, new_token, OP_BIN, BIN_SCOPE, BIN_PEAKS
+from .server import Hub, new_token, OP_BIN, BIN_SCOPE, BIN_PEAKS, BIN_PEAKS_PAD
 from .track import MODES
 
 MAX_UPLOAD = 200 * 1024 * 1024
@@ -28,7 +28,8 @@ class App:
         self.inbox = os.path.realpath(inbox)
         self.loader = Loader(engine, on_done=self._loaded,
                              on_error=self._load_error)
-        self.peaks = {}     # track index -> ndarray (buckets, 2)
+        self.peaks = {}      # track index -> ndarray (buckets, 2)
+        self.pad_peaks = {}  # pad index -> the envelope that key holds
         # Paths this server itself returned from a user-driven OS dialog.
         # The dialog exists to reach folders outside --root, so its results
         # cannot be judged by the root check; choosing a file in the OS
@@ -67,6 +68,10 @@ class App:
         return self
 
     def on_client_join(self, client):
+        for i, arr in self.pad_peaks.items():
+            q = np.clip(arr * 127.0, -127, 127).astype(np.int8)
+            client.send(OP_BIN, struct.pack("!BBH", BIN_PEAKS_PAD, i & 0xFF,
+                                            q.shape[0]) + q.tobytes())
         for i, arr in self.peaks.items():
             q = np.clip(arr * 127.0, -127, 127).astype(np.int8)
             client.send(OP_BIN,
@@ -227,6 +232,18 @@ class App:
                 self.loader.variant_async(int(msg["i"]), msg["mode"])
         elif op == "reslice":
             self.loader.reslice_async(int(msg["i"]), int(msg.get("n", 16)))
+        elif op == "pad.take":
+            # the key's envelope is the source track's, captured now so it
+            # survives that track being replaced
+            t = int(msg.get("track", -1))
+            i = int(msg.get("i", 0))
+            if t in self.peaks:
+                self.pad_peaks[i] = self.peaks[t]
+                self.hub.pad_peaks(i, self.peaks[t])
+            self.engine.post("pad.take", **{k: v for k, v in msg.items() if k != "op"})
+        elif op == "pad.clear":
+            self.pad_peaks.pop(int(msg.get("i", 0)), None)
+            self.engine.post("pad.clear", **{k: v for k, v in msg.items() if k != "op"})
         elif op == "pads.map":
             self.map_pads(int(msg["track"]), msg.get("mode", "ONE"))
         elif op == "tap":
@@ -249,10 +266,20 @@ class App:
         return files
 
     def map_pads(self, track_i, mode="ONE"):
+        """Fill the keys from a track's slices — each one SNAPSHOTTING the
+        audio, so the keys survive the track being replaced."""
         t = self.engine.tracks[track_i]
-        n = max(1, int(t.slices.size))
+        pts = t.slices
+        n = max(1, int(pts.size))
         for k in range(len(self.engine.pads)):
-            self.engine.post("pad.assign", i=k, track=track_i,
-                             slice=k % n, mode=mode,
-                             quantize=(mode == "LOOP"),
-                             label="%s/%02d" % (t.name.split(".")[0][:9], k + 1))
+            if pts.size:
+                j = k % n
+                ls = int(pts[j])
+                le = int(pts[j + 1]) if j + 1 < pts.size else t.frames
+            else:
+                ls, le = t.loop_start, t.loop_end
+            self.handle({"op": "pad.take", "i": k, "track": track_i,
+                         "ls": ls, "le": le, "slice": k % n,
+                         "label": "%s/%02d" % (t.name.split(".")[0][:9], k + 1)})
+            self.engine.post("pad.assign", i=k, mode=mode,
+                             quantize=(mode == "LOOP"))
