@@ -65,7 +65,9 @@
   --pads-h: 168px;
 
   /* Column templates. Structure, not spacing — declared once, here. */
-  --strip-cols: 18px minmax(0, 1fr) 40px 56px 52px 74px 40px 64px 18px;
+  --strip-cols: 18px minmax(0, 1fr) 124px 40px 56px 52px 74px 40px 64px 18px;
+  --wave-strip: 124px;   /* the per-row envelope */
+  --pad-wave:    13px;   /* the same thing at pad size */
   --meter-w:  4px;
   --fader-h: 10px;
   --pad-gap:  1px;    /* pads share hairlines, so the gap IS the rule */

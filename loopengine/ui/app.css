@@ -205,6 +205,12 @@ html, body {
 .c-name { font-size: var(--t3); line-height: var(--lh3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .c-bpm, .c-len { font-size: var(--t2); font-variant-numeric: tabular-nums; opacity: var(--dim1); }
 .c-meter canvas { display: block; width: 100%; height: var(--fader-h); }
+/* Each row carries its own envelope: a real cell sharing the row's hairlines,
+   not a panel floating over anything. The plot is cached per track and
+   blitted; a drag moves the region and the playhead, never the peaks. */
+.c-wave { display: block; height: 100%; overflow: hidden; }
+.c-wave canvas { display: block; width: 100%; height: 100%; }
+.p-wave { display: block; width: 100%; height: var(--pad-wave); grid-column: 1 / 3; }
 .c-gain, .c-pan { display: flex; align-items: center; }
 .c-gain .slider, .c-pan .slider { margin: 0; }
 .c-btns { display: flex; gap: var(--s1); }
@@ -306,7 +312,7 @@ kbd {
   background: var(--bg); border: 0; border-radius: var(--r);
   color: var(--fg); font-family: var(--font-text);
   display: grid; grid-template-columns: minmax(0, 1fr) 5ch;
-  align-content: space-between;
+  align-content: space-between; row-gap: var(--s1);
   padding: var(--s1) var(--s3); cursor: pointer; text-align: left;
   overflow: hidden;
 }

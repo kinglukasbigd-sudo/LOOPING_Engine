@@ -261,6 +261,7 @@ function buildStrips(n) {
     el.innerHTML = `
       <span class="c-n">${i + 1}</span>
       <span class="c-name">—</span>
+      <span class="c-wave"><canvas></canvas></span>
       <span class="c-bpm">—</span>
       <span class="c-len">—</span>
       <span class="c-meter"><canvas></canvas></span>
@@ -442,7 +443,8 @@ function buildPads(n) {
     b.dataset.i = i;
     b.innerHTML = `<span class="p-key">${PAD_CAPS[i] || i + 1}</span>
                    <span class="p-mode">—</span>
-                   <span class="p-label">unassigned</span>`;
+                   <span class="p-label">unassigned</span>
+                   <canvas class="p-wave"></canvas>`;
     b.addEventListener('mousedown', (e) => {
       if (assignArmed) return assignToKey(i);
       if (editKeys) { focusKind = 'key'; focusKey = i; paintKeyFocus(); return; }
@@ -532,12 +534,15 @@ function renderState() {
     }
     lastFired[i] = t.fired;
     drawTrackMeter(el.querySelector('.c-meter canvas'), i, t);
+    const [wls, wle] = liveLoop(i, Object.assign({}, t, { kind: 'track' }));
+    drawMini(el.querySelector('.c-wave canvas'), 't' + i, peaks[i],
+             t.frames, wls, wle, t.phase, t.playing);
   });
 
   S.pads.forEach((p, i) => {
     const el = $$('#padgrid .pad')[i];
     if (!el) return;
-    const mapped = p.track >= 0;
+    const mapped = p.loaded;
     el.classList.toggle('unmapped', !mapped);
     el.classList.toggle('on', !!S.pads_on[i]);
     el.classList.toggle('armed', !!(S.pads_pending && S.pads_pending[i]));
@@ -545,6 +550,9 @@ function renderState() {
       ? `${p.label}  T${p.track + 1}/S${String(p.slice + 1).padStart(2, '0')}`
       : 'unassigned');
     setText(el.querySelector('.p-mode'), mapped ? p.mode : '—');
+    // the slice this key holds, at pad size
+    drawMini(el.querySelector('.p-wave'), 'p' + i, padPeaks[i],
+             p.frames, p.ls, p.le, -1, false);
   });
   // the engine owns the pad mode; a reloaded panel adopts it rather than
   // stamping its own default over a running set
@@ -634,6 +642,40 @@ function renderInspector() {
    canvas and blit that each frame; a drag then moves the region and the
    handles only, and never re-walks the peak array. */
 const waveCache = { key: '', dim: null, hot: null };
+/* One cache per small strip, keyed the same way as the big panel. Eight rows
+   and sixteen pads redrawing peaks every frame would be sixty times the work
+   of plotting them once; these blit. */
+const miniCache = {};
+
+function drawMini(cv, id, pk, frames, ls, le, phase, lit) {
+  const [g, W, H] = fit(cv);
+  g.fillStyle = C.bg; g.fillRect(0, 0, W, H);
+  if (!pk || !frames) return;
+  const key = [id, W, H, pk.length].join(':');
+  let c = miniCache[id];
+  if (!c || c.key !== key) {
+    c = miniCache[id] = { key, dim: plot(W, H, C.fg, pk),
+                          hot: plot(W, H, C.accent, pk) };
+  }
+  g.globalAlpha = DIM2;
+  g.drawImage(c.dim, 0, 0);
+  g.globalAlpha = 1;
+  const x0 = Math.round(ls / frames * W);
+  const x1 = Math.round(le / frames * W);
+  if (x1 > x0) {
+    g.save();
+    g.beginPath(); g.rect(x0, 0, x1 - x0, H); g.clip();
+    g.drawImage(c.hot, 0, 0);
+    g.restore();
+  }
+  g.fillStyle = C.n2;
+  g.fillRect(x0, 0, 1, H);
+  g.fillRect(Math.max(x0 + 1, x1 - 1), 0, 1, H);
+  if (lit && phase >= 0) {
+    g.fillStyle = C.fg;
+    g.fillRect(Math.round(phase / frames * W), 0, 1, H);
+  }
+}
 
 function waveKey(t, W, H) {
   return [t.kind, t.i, t.mode, t.frames, W, H,
