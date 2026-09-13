@@ -18,28 +18,66 @@ from .loader import decode
 from . import dsp
 
 
-def build_session(kit_dir, sr=48000, blocksize=256):
+class OutsideAllowed(Exception):
+    """A file the renderer was not permitted to read. Never a silent gap."""
+
+
+def inside(path, allowed):
+    rp = os.path.realpath(path)
+    return any(rp == a or rp.startswith(a + os.sep) for a in allowed)
+
+
+def load_into(eng, paths, allowed):
+    """Load explicit files, refusing anything outside `allowed` out loud.
+
+    The server refuses paths outside --root unless the OS dialog granted
+    them. This renderer had no boundary at all, which made it quietly more
+    permissive than the thing it is supposed to reproduce. It now carries the
+    same rule, and a file it may not read is a hard error naming the file
+    rather than a track that renders silent.
+    """
+    allowed = [os.path.realpath(a) for a in allowed]
+    for i, path in enumerate(paths[:len(eng.tracks)]):
+        if not inside(path, allowed):
+            raise OutsideAllowed(
+                "%s is outside every --allow path. Pass --allow %s to render "
+                "it, the same way the panel needs the OS dialog to grant it."
+                % (path, os.path.dirname(os.path.realpath(path))))
+        buf, fsr = decode(path)
+        bpm, conf = dsp.estimate_bpm(buf, fsr)
+        pts, _ = dsp.slice_points(buf, fsr, 16)
+        eng.post("track.load", i=i, buf=buf, sr=fsr,
+                 name=os.path.basename(path), path=path,
+                 bpm=bpm, conf=conf, slices=pts)
+    return eng
+
+
+def build_session(kit_dir, sr=48000, blocksize=256, allow=None):
     eng = Engine(samplerate=sr, blocksize=blocksize, offline=True).start()
     files = sorted(f for f in os.listdir(kit_dir)
                    if f.lower().endswith((".wav", ".flac", ".mp3", ".ogg",
                                           ".aif", ".aiff")))
-    for i, name in enumerate(files[:len(eng.tracks)]):
-        path = os.path.join(kit_dir, name)
-        buf, fsr = decode(path)
-        bpm, conf = dsp.estimate_bpm(buf, fsr)
-        pts, _ = dsp.slice_points(buf, fsr, 16)
-        eng.post("track.load", i=i, buf=buf, sr=fsr, name=name, path=path,
-                 bpm=bpm, conf=conf, slices=pts)
+    paths = [os.path.join(kit_dir, f) for f in files]
+    load_into(eng, paths, [kit_dir] + list(allow or []))
     return eng, files
 
 
 def main(argv=None):
     argv = argv or sys.argv[1:]
+    allow = []
+    while "--allow" in argv:
+        k = argv.index("--allow")
+        allow.append(argv[k + 1])
+        del argv[k:k + 2]
     kit = argv[0] if argv else "kits/testkit-124"
     out = argv[1] if len(argv) > 1 else "render.wav"
     bars = float(argv[2]) if len(argv) > 2 else 8.0
 
-    eng, files = build_session(kit)
+    try:
+        eng, files = build_session(kit, allow=allow)
+    except OutsideAllowed as e:
+        print("refused: %s" % e, file=sys.stderr)
+        return 2
     eng.stop()                       # kill the wall clock; we pull manually
     eng.stream = None
 

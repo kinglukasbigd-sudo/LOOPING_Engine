@@ -90,11 +90,31 @@ class App:
     # -- file system -------------------------------------------------------
     GRANT_MAX = 64
 
+    def _pinned(self):
+        """Paths a track is currently holding. These must outlive eviction.
+
+        Evicting a grant for a file that is loaded and on screen breaks the
+        next thing that touches it — a reslice, a source-mode switch, a
+        reload — with a refusal the user cannot act on, because from where
+        they sit the file is plainly right there.
+        """
+        out = set()
+        for t in self.engine.tracks:
+            if getattr(t, "src", None) is not None and getattr(t, "path", ""):
+                out.add(os.path.realpath(t.path))
+        return out
+
     def _grant(self, p):
         rp = os.path.realpath(p)
         self._granted[rp] = True
-        while len(self._granted) > self.GRANT_MAX:
-            self._granted.popitem(last=False)
+        if len(self._granted) <= self.GRANT_MAX:
+            return
+        pinned = self._pinned()
+        for k in list(self._granted):                  # oldest first
+            if len(self._granted) <= self.GRANT_MAX:
+                break
+            if k not in pinned and k != rp:
+                del self._granted[k]
 
     def _inside_roots(self, p):
         rp = os.path.realpath(p)
