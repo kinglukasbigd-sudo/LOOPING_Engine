@@ -248,8 +248,14 @@ html, body {
 }
 /* Only this one carries a name that changes under it, so only this one needs a
    reserved box; the rest are constant words and can size to their content. */
-#w-title { flex: 0 1 var(--w-title); min-width: 0; }
-#w-info { overflow: hidden; text-overflow: ellipsis; min-width: 0; flex-shrink: 2; }
+/* Fixed, never shrinking. The bar overflows at narrow widths, and a shrinking
+   title redistributes by CONTENT length — so every track name of a different
+   length moved the mode buttons along with it. */
+#w-title { flex: 0 0 var(--w-title); }
+/* The only flexible item in the bar, so it absorbs all the slack and its own
+   box stays put: everything either side of it is fixed. */
+#w-info { overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+          flex: 1 1 0; min-width: 0; text-align: right; }
 /* The two region figures, each in a box wide enough for any sample offset a
    file can hold, so dragging never shoves the buttons along. */
 .rgn { display: flex; align-items: baseline; gap: var(--s2); flex: none; }
@@ -299,7 +305,7 @@ kbd {
 .pad {
   background: var(--bg); border: 0; border-radius: var(--r);
   color: var(--fg); font-family: var(--font-text);
-  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  display: grid; grid-template-columns: minmax(0, 1fr) 5ch;
   align-content: space-between;
   padding: var(--s1) var(--s3); cursor: pointer; text-align: left;
   overflow: hidden;
@@ -316,7 +322,11 @@ kbd {
   font-size: var(--t3); line-height: var(--lh3); letter-spacing: var(--tr-legend);
 }
 .p-label { font-size: var(--t1); line-height: var(--lh1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.p-mode { font-family: var(--font-display); font-size: var(--t1); letter-spacing: var(--tr-legend); opacity: var(--dim2); }
+/* ONE / GATE / LOOP / — all in one box: an auto column here resized the key
+   column beside it every time a pad's mode changed. */
+.p-mode { font-family: var(--font-display); font-size: var(--t1);
+          letter-spacing: var(--tr-legend); opacity: var(--dim2);
+          text-align: right; overflow: hidden; white-space: nowrap; }
 .pad.on .p-mode, .pad.on .p-label { opacity: 1; }
 
 /* ── BROWSER (replaces the pad grid in place — no modal) ─────────────── */
