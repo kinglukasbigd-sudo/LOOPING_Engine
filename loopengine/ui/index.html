@@ -29,13 +29,14 @@
       <span class="stat"><i>CLIP</i><b id="h-clip">0</b></span>
       <span class="stat"><i>VOX</i><b id="h-vox">0/16</b></span>
       <span class="stat" id="h-link"><i>LINK</i><b id="h-conn">—</b></span>
+      <button class="btn" id="help-btn" data-act="help">?</button>
     </div>
   </header>
 
   <!-- ── RAIL ─────────────────────────────────────────────────────────── -->
   <section id="rail">
     <div class="rail-block pos-block">
-      <div class="legend">POSITION — BAR.BEAT</div>
+      <div class="legend" data-help="pos">POSITION — BAR.BEAT</div>
       <div id="pos" class="pos">001.1</div>
       <div class="btn-row">
         <button class="btn" data-act="run">RUN</button>
@@ -45,7 +46,7 @@
     </div>
 
     <div class="rail-block">
-      <div class="legend">TEMPO</div>
+      <div class="legend" data-help="tempo">TEMPO</div>
       <div class="val-row">
         <div id="bpm" class="big">124.00</div>
         <button class="btn tall" data-act="tap">TAP</button>
@@ -54,13 +55,13 @@
     </div>
 
     <div class="rail-block">
-      <div class="legend">LAUNCH QUANTUM</div>
+      <div class="legend" data-help="quantum">LAUNCH QUANTUM</div>
       <button id="quantum" class="btn wide" data-act="quantum">BAR</button>
       <div id="pending" class="pending-line">nothing queued</div>
     </div>
 
     <div class="rail-block grow">
-      <div class="legend">MASTER</div>
+      <div class="legend" data-help="master">MASTER</div>
       <div class="val-row">
         <div id="master-db" class="big">-3.1</div><span class="unit">dB</span>
       </div>
@@ -75,16 +76,16 @@
   <!-- ── TRACKS ───────────────────────────────────────────────────────── -->
   <section id="tracks">
     <div class="strip head-strip">
-      <span class="c-n">#</span>
-      <span class="c-name">SOURCE</span>
-      <span class="c-wave">WAVE</span>
-      <span class="c-bpm">BPM</span>
-      <span class="c-len">LOOP</span>
-      <span class="c-meter">LEVEL</span>
-      <span class="c-gain">GAIN</span>
-      <span class="c-pan">PAN</span>
-      <span class="c-btns">M S R</span>
-      <span class="c-q">Q</span>
+      <span class="c-n" data-help="num">#</span>
+      <span class="c-name" data-help="source">SOURCE</span>
+      <span class="c-wave" data-help="wave">WAVE</span>
+      <span class="c-bpm" data-help="bpm">BPM</span>
+      <span class="c-len" data-help="loop">LOOP</span>
+      <span class="c-meter" data-help="level">LEVEL</span>
+      <span class="c-gain" data-help="gain">GAIN</span>
+      <span class="c-pan" data-help="pan">PAN</span>
+      <span class="c-btns" data-help="msr">M S R</span>
+      <span class="c-q" data-help="q">Q</span>
     </div>
     <div id="strips"></div>
   </section>
@@ -115,7 +116,7 @@
   <!-- ── PADS  (breaks the column grid: runs under the inspector) ─────── -->
   <section id="pads">
     <div class="panel-bar">
-      <span class="panel-title">PADS</span>
+      <span class="panel-title" data-help="pads">PADS</span>
       <span class="seg" id="pad-modes">
         <button class="btn seg-btn" data-pmode="ONE">ONE</button>
         <button class="btn seg-btn" data-pmode="GATE">GATE</button>
@@ -129,6 +130,8 @@
       <button class="btn" data-act="mappads">MAP</button>
     </div>
     <div id="padgrid" class="padgrid"></div>
+
+    <div id="helpsheet" class="helpsheet" aria-hidden="true"></div>
 
     <div id="browser" class="browser" aria-hidden="true">
       <div class="panel-bar">

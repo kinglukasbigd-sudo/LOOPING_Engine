@@ -23,6 +23,38 @@ html, body {
   opacity: var(--dim1);
 }
 .legend.inline { opacity: var(--dim2); white-space: nowrap; }
+/* Help text lands in cells that are already reserved. Clipping is deliberate:
+   a longer string must never be able to reflow the grid. */
+[data-help] { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* A panel title sizes to its content, so swapping PADS for KEYS — one pixel
+   narrower — shifted the buttons beside it. Reserved for both strings. */
+.panel-title[data-help] { width: 6ch; flex: none; }
+body.helping [data-help] { opacity: 1; }
+/* In help mode the inspector carries the long form; its rows wrap there
+   because that column already scrolls. */
+/* The long form does NOT live in the inspector. Making those rows tall enough
+   for a sentence would reflow the column the moment help turned on — the
+   exact thing help must not do. It goes in the pad grid's box instead, which
+   is wide, already replaceable in place, and costs nothing when help is off. */
+.helpsheet {
+  position: absolute; inset: 0; background: var(--bg);
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start; gap: 0 var(--s5);
+  padding: var(--s3) var(--s4);
+  transform: translateY(101%);
+  transition: transform var(--m-nav) var(--ease);
+  will-change: transform; pointer-events: none; overflow-y: auto;
+}
+.helpsheet.open { transform: translateY(0); pointer-events: auto; }
+.hrow { display: grid; grid-template-columns: var(--rail) minmax(0, 1fr);
+        gap: var(--s3); padding: var(--s1) 0; align-items: baseline; }
+.hrow b {
+  font-family: var(--font-display); font-weight: 600; font-size: var(--t1);
+  letter-spacing: var(--tr-legend); text-transform: uppercase;
+  opacity: var(--dim1); text-indent: var(--optic-centre);
+}
+.hrow span { font-size: var(--t1); line-height: var(--lh2); }
+#help-btn { margin-left: auto; }
 
 /* ── THE RULE GRID ───────────────────────────────────────────────────── */
 #app {
@@ -369,14 +401,17 @@ kbd {
 #insp { display: flex; flex-direction: column; overflow: hidden; }
 .rows { margin: 0; padding: var(--s3) var(--s4); display: grid;
         grid-template-columns: var(--w-label) minmax(0, 1fr); gap: 0 var(--s4); }
+
 .rows dt {
   font-family: var(--font-display); font-size: var(--t1); line-height: var(--lh2);
   letter-spacing: var(--tr-legend); text-transform: uppercase; opacity: var(--dim2);
+  height: var(--lh2); overflow: hidden;
 }
 .rows dd {
   margin: 0; font-size: var(--t2); line-height: var(--lh2);
   font-variant-numeric: tabular-nums; text-align: right;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  height: var(--lh2);          /* an empty row keeps its box */
 }
 /* The wordmark is letterspaced; without this it starts a hair right of the
    panel edges below it. Baseline, not box, is what the eye lines up. */

@@ -41,6 +41,37 @@ function codeOf(e) {
 }
 
 let ws = null, S = null, focus = 0, padMode = null;
+/* Help is a MODE, not a layer. Nothing floats over the grid; each cell that
+   has room swaps its own label for an explanation, in its own box. The short
+   form has to fit the box it lands in — every target is a reserved cell with
+   nowrap and overflow hidden, so a long string clips rather than reflowing —
+   and the long form goes in the inspector, which already scrolls.
+
+   One table. Labels and help cannot drift apart because the label is only
+   ever restored from here. */
+const HELP = {
+  pos:     ['BAR AND BEAT',      'Where the master clock is. Counts from 1. Turns orange while running.'],
+  tempo:   ['BEATS PER MINUTE',  'The master tempo. TAP it four times to set it by hand.'],
+  quantum: ['WHEN LAUNCHES LAND','Changes wait for this boundary before taking effect. OFF applies at once.'],
+  master:  ['OUTPUT LEVEL',      'Final level before the limiter. The ladder below is what is leaving.'],
+  num:     ['N',                 'Track number. Hold SHIFT and press its key to mute or launch it.'],
+  source:  ['FILE ON THIS TRACK','The loaded file. Drop one here, or press L to browse.'],
+  wave:    ['THIS FILE',         'The whole file. Orange is the part that loops; the line is the playhead.'],
+  bpm:     ['DETECTED TEMPO',    'Measured from the file. Shown only — it never moves a loop point.'],
+  loop:    ['LOOP LENGTH',       'How long the looping part is, in beats of this file.'],
+  level:   ['OUTPUT',            'How loud this track is right now. Fills solid if it clips.'],
+  gain:    ['VOLUME',            'Drag to set this track level.'],
+  pan:     ['LEFT / RIGHT',      'Drag to place this track in the stereo field.'],
+  msr:     ['MUTE SOLO REVERSE', 'Mute, solo, and play backwards. Reverse waits for the quantum.'],
+  q:       ['WAITING',           'Shows what this track is waiting to do at the next boundary.'],
+  pads:    ['KEYS',              'Each key holds its own sound and loop, and keeps them when you change the track.'],
+};
+
+/* Reserved, not derived: the inspector holds this many rows whether it is
+   showing track detail (13) or the help table (13). An empty row keeps its
+   box so a shorter list cannot shorten the column. */
+const INSPECTOR_ROWS = 16;
+let helpMode = false;
 let focusKind = 'track';   // 'track' | 'key' — what the waveform panel edits
 let focusKey = 0;          // which key, when focusKind is 'key'
 let assignArmed = false;   // next key pressed takes the focused track's region
@@ -363,6 +394,28 @@ async function openPicker(multiple) {
   }
 }
 
+function applyHelp() {
+  const sheet = $('#helpsheet');
+  if (!sheet.childElementCount) {
+    sheet.innerHTML = Object.keys(HELP).map(
+      k => `<div class="hrow"><b>${HELP[k][0]}</b><span>${HELP[k][1]}</span></div>`
+    ).join('');
+  }
+  sheet.classList.toggle('open', helpMode);
+  sheet.setAttribute('aria-hidden', String(!helpMode));
+  $$('[data-help]').forEach((el) => {
+    const h = HELP[el.dataset.help];
+    if (!h) return;
+    if (helpMode) {
+      if (el.dataset.label === undefined) el.dataset.label = el.textContent;
+      setText(el, h[0]);
+    } else if (el.dataset.label !== undefined) {
+      setText(el, el.dataset.label);
+    }
+  });
+  document.body.classList.toggle('helping', helpMode);
+}
+
 function paintKeyFocus() {
   $$('#padgrid .pad').forEach((el, k) =>
     el.classList.toggle('editing', editKeys && focusKind === 'key' && k === focusKey));
@@ -623,17 +676,24 @@ function renderInspector() {
     ['peak', dB(t.peak) + ' dB'],
     ['state', queued ? queued + ' queued' : (t.playing ? 'running' : 'stopped')],
   ];
-  // Built once. Rewriting innerHTML at 60fps re-lays out the whole column and
-  // makes every value twitch; from here on only the text nodes change.
+  /* One fixed set of rows, reused. Rebuilding innerHTML would destroy every
+     dt and dd and create new ones — invisible on screen, but the elements
+     that were there are gone, and anything measuring element identity is
+     right to call that a reflow. So the boxes stay and only text changes,
+     which is the same rule the rest of the panel follows. */
   const host = $('#i-rows');
-  if (host.childElementCount !== rows.length * 2) {
-    host.innerHTML = rows.map(([k]) => `<dt>${k}</dt><dd></dd>`).join('');
+  const source = rows;
+  if (host.childElementCount !== INSPECTOR_ROWS * 2) {
+    host.innerHTML = Array.from({ length: INSPECTOR_ROWS },
+      () => '<dt></dt><dd></dd>').join('');
   }
+  const dts = host.querySelectorAll('dt');
   const dds = host.querySelectorAll('dd');
-  rows.forEach(([, v], k) => {
-    const str = String(v);
-    if (dds[k].textContent !== str) dds[k].textContent = str;
-  });
+  for (let k = 0; k < INSPECTOR_ROWS; k++) {
+    const pair = source[k];
+    setText(dts[k], pair ? pair[0] : '');
+    setText(dds[k], pair ? String(pair[1]) : '');
+  }
 }
 
 /* ── canvases ───────────────────────────────────────────────────────── */
@@ -1032,6 +1092,11 @@ const ACT = {
     if (!editKeys && focusKind === 'key') setFocus(focus);
     paintKeyFocus();
   },
+  help: () => {
+    helpMode = !helpMode;
+    $('#help-btn').setAttribute('aria-pressed', helpMode);
+    applyHelp();
+  },
   clearkey: () => {
     if (focusKind !== 'key') { localError = 'No key is being edited.'; return; }
     send({ op: 'pad.clear', i: focusKey });
@@ -1113,8 +1178,11 @@ window.addEventListener('keydown', (e) => {
       break;
     }
     case 'Escape':
-      if (browserOpen()) closeBrowser(); else send({ op: 'panic' });
+      if (helpMode) ACT.help();
+      else if (browserOpen()) closeBrowser();
+      else send({ op: 'panic' });
       break;
+    case 'Slash': if (e.shiftKey) { e.preventDefault(); ACT.help(); } break;
   }
 });
 window.addEventListener('keyup', (e) => {
