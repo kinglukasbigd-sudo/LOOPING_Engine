@@ -42,7 +42,16 @@ class Transport:
 
         With quantum OFF every sample is an edge, so queued work fires at the
         top of the block.
+
+        A stopped clock has no edges either. `pos` does not advance while
+        stopped, so a queue waiting on a boundary here would wait for ever:
+        the change never lands, the panel shows it queued indefinitely, and
+        worse, it fires later when the transport restarts and overwrites
+        whatever the player edited in the meantime. Quantising against a clock
+        that is not running is meaningless, so every moment is an edge.
         """
+        if not self.playing:
+            return 0
         q = self.quantum_beats
         if q <= 0.0:
             return 0

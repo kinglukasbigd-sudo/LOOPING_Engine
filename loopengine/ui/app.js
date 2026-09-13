@@ -283,6 +283,17 @@ async function openPicker(multiple) {
   awaitingPick = target;                       // paint first
   localError = '';
   paintAwaiting();
+  // if the reply never arrives — socket dropped, dialog killed — the row must
+  // not read "waiting" for the rest of the session
+  clearTimeout(openPicker._t);
+  openPicker._t = setTimeout(() => {
+    if (awaitingPick === target) {
+      awaitingPick = null;
+      localError = 'The file dialog did not answer. Nothing was loaded — '
+                 + 'press PICK again, or use LOAD to browse by path.';
+      paintAwaiting();
+    }
+  }, 300000);
   try {
     const r = await fetch(`/api/pick?t=${encodeURIComponent(TOKEN)}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -311,6 +322,7 @@ function paintAwaiting() {
 
 /* Cancel is a normal outcome: the slot goes back to exactly what it showed. */
 function onPicked(msg) {
+  clearTimeout(openPicker._t);
   awaitingPick = null;
   paintAwaiting();
   if (msg.error) { localError = msg.error; return; }
@@ -410,8 +422,11 @@ function renderState() {
   if (document.activeElement !== $('#bpm-slider')) $('#bpm-slider').value = S.bpm;
   setText($('#quantum'), QUANTUM_LABELS[settled('quantum', S.quantum_i)]);
   const pend = $('#pending');
+  /* A silent wait is indistinguishable from a crash. Say what is waiting
+     and how long is left, so a long quantum reads as patience not a hang. */
   setText(pend, S.pending
-    ? `${S.pending} queued — fires on the ${S.quantum.toLowerCase()}`
+    ? `${S.pending} queued — fires in ${(S.pending_ms / 1000).toFixed(1)} s`
+      + ` (${S.quantum.toLowerCase()})`
     : 'nothing queued');
   pend.classList.toggle('armed', S.pending > 0);
   setText($('#master-db'), dB(S.master));
@@ -827,8 +842,13 @@ function frame() {
     grabbed = null;
     if (dragLoop) {
       const held = dragLoop;
-      // the engine may hold a region change until the next quantum, so keep
-      // showing the hand's version until the engine reports the same numbers
+      // The engine may hold a region change until the next quantum, so keep
+      // showing the hand's version until it reports the same numbers. The
+      // deadline tracks the quantum: a fixed 4 s would expire mid-wait at
+      // 4BAR and snap the readout back to a value the engine is about to
+      // replace. It is still a deadline — a dropped socket must not leave
+      // the panel showing a number nothing agrees with.
+      const grace = Math.max(4000, (S ? S.pending_ms : 0) + 2000);
       const settle = setInterval(() => {
         if (dragLoop !== held) return clearInterval(settle);
         const t = S && S.tracks[held.i];
@@ -836,7 +856,7 @@ function frame() {
           dragLoop = null; clearInterval(settle);
         }
       }, 120);
-      setTimeout(() => { if (dragLoop === held) dragLoop = null; }, 4000);
+      setTimeout(() => { if (dragLoop === held) dragLoop = null; }, grace);
     }
   });
 

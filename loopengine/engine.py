@@ -204,6 +204,12 @@ class Engine:
         mix = self._mix[:frames]
         mix[:] = 0.0
 
+        # A queue must never be unreachable. If the clock is not running there
+        # are no boundaries to wait for, so drain it now rather than let it
+        # strand and fire on the next start.
+        if self._pending and not self.transport.playing:
+            self._fire()
+
         off = 0
         guard = 0
         while off < frames and guard < 64:
@@ -288,6 +294,13 @@ class Engine:
                 self._lat_n += 1
             if op in QUANTIZED and self.transport.playing and \
                     self.transport.quantum_beats > 0:
+                # Last edit wins. A drag emits a command per pointer move, so
+                # without this a two-second wait at BAR piles up a hundred
+                # redundant region changes that all fire at once.
+                i = kw.get("i")
+                if i is not None:
+                    self._pending = [(o, k) for (o, k) in self._pending
+                                     if not (o == op and k.get("i") == i)]
                 self._pending.append((op, kw))
                 self._label_pending(op, kw)
             else:
@@ -620,6 +633,8 @@ class Engine:
             "quantum": QUANTUM_LABELS[tr.quantum_i],
             "quantum_i": tr.quantum_i,
             "pending": len(self._pending),
+            "pending_ms": round(self.transport.frames_to_boundary()
+                                / self.sr * 1000.0, 0) if self._pending else 0,
             "master": round(self.master_gain, 3),
             "mpeak": [round(float(self.master_peak[0]), 4),
                       round(float(self.master_peak[1]), 4)],
