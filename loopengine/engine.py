@@ -340,7 +340,8 @@ class Engine:
             t = self._t(kw)
             if t:
                 t.load(kw["buf"], kw["sr"], kw["name"], kw["path"], kw["bpm"],
-                       kw["conf"], kw["slices"], kw.get("xfade_ms", 6.0))
+                       kw["conf"], kw["slices"], kw.get("xfade_ms", 6.0),
+                       analysing=kw.get("analysing", False))
         elif op == "track.clear":
             t = self._t(kw)
             if t:
@@ -421,6 +422,17 @@ class Engine:
             t = self._t(kw)
             if t:
                 t.xfade = int(max(0.0, min(120.0, kw["v"])) * 0.001 * t.sr)
+        elif op == "track.analysis":
+            # Second-stage results. Deliberately touches nothing but the
+            # display fields: analysis never moves a loop point, and the
+            # track has been playable since the buffer arrived.
+            t = self._t(kw)
+            if t:
+                t.bpm = kw.get("bpm", t.bpm)
+                t.bpm_conf = kw.get("conf", t.bpm_conf)
+                if kw.get("slices") is not None:
+                    t.slices = kw["slices"]
+                t.analysing = False
         elif op == "track.slices":
             t = self._t(kw)
             if t:

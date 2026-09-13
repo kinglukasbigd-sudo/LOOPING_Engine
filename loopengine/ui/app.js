@@ -443,7 +443,8 @@ function renderState() {
     setText(el.querySelector('.c-name'),
             i === awaitingPick ? 'waiting for the file dialog'
                                : (t.loaded ? t.name : 'empty'));
-    setText(el.querySelector('.c-bpm'), t.loaded ? fx(t.bpm, 1) : '—');
+    setText(el.querySelector('.c-bpm'),
+            !t.loaded ? '—' : (t.analysing ? '···' : fx(t.bpm, 1)));
     setText(el.querySelector('.c-len'),
             t.loaded ? fx(loopBeats(t), 2) + ' b' : '—');
     const g = el.querySelector('.c-gain input');
@@ -513,10 +514,10 @@ function renderInspector() {
   setText($('#w-out'), t.loaded ? rle.toLocaleString('en-US') : '—');
   $$('.rgn').forEach((el, k) =>
     el.classList.toggle('aimed', t.loaded && handleFocus === (k ? 'out' : 'in')));
-  setText($('#w-info'), t.loaded
-    ? `${t.sr} Hz · ${t.ch} ch · ${secs(t.frames, t.sr)} · ${t.slices} slices` +
-      (m.slice_method ? ` (${m.slice_method})` : '')
-    : 'no file');
+  setText($('#w-info'), !t.loaded ? 'no file'
+    : `${t.sr} Hz · ${t.ch} ch · ${secs(t.frames, t.sr)} · `
+      + (t.analysing ? 'analysing' :
+         `${t.slices} slices` + (m.slice_method ? ` (${m.slice_method})` : '')));
 
   const err = $('#i-error');
   if (localError) { err.hidden = false; setText(err, localError); }
@@ -531,7 +532,9 @@ function renderInspector() {
     ['path', t.loaded ? t.path.replace(/^.*\/([^/]+\/[^/]+)$/, '…/$1') : '—'],
     ['format', t.loaded ? `${t.sr} Hz · ${t.ch} ch` : '—'],
     ['length', t.loaded ? `${t.frames.toLocaleString('en-US')} fr · ${secs(t.frames, t.sr)}` : '—'],
-    ['bpm', t.loaded ? `${fx(t.bpm, 2)} · ${fx(t.conf * 100, 0)}% sure` : '—'],
+    ['bpm', !t.loaded ? '—'
+            : t.analysing ? 'analysing — playable now'
+            : `${fx(t.bpm, 2)} · ${fx(t.conf * 100, 0)}% sure`],
     ['source', t.mode],
     ['loop', t.loaded ? `${ls.toLocaleString('en-US')} → ${le.toLocaleString('en-US')}` : '—'],
     ['loop len', t.loaded ? `${fx(loopBeats(t), 3)} b · ${secs(le - ls, t.sr)}` : '—'],

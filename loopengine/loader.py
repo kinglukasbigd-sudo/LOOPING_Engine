@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import threading
+import time
 
 import numpy as np
 
@@ -95,21 +96,55 @@ class Loader:
                          daemon=True).start()
 
     def _work(self, track_i, path, want_slices):
+        """Three stages, each published the moment it is ready.
+
+        Only the decoded buffer is needed to play. Analysis used to run first
+        and block it: measured on a four-minute track, decode was milliseconds
+        and analysis was 7.6 s, so the track sat silent for seven seconds
+        holding results it did not need in order to make a sound.
+
+          1. decode        -> the track is playable, loop 0..frames
+          2. peaks         -> the waveform appears
+          3. bpm, slices   -> the markers appear
+
+        Analysis still never moves a loop point; it only fills in display.
+        """
+        t0 = time.perf_counter()
         try:
             buf, sr = decode(path)
         except DecodeError as e:
             self.on_error(track_i, str(e))
             return
-        bpm, conf = dsp.estimate_bpm(buf, sr)
-        pts, method = dsp.slice_points(buf, sr, want_slices)
-        self.engine.post("track.load", i=track_i, buf=buf, sr=sr,
-                         name=os.path.basename(path), path=path,
-                         bpm=bpm, conf=conf, slices=pts)
+        t_decode = time.perf_counter() - t0
+        name = os.path.basename(path)
+
+        self.engine.post("track.load", i=track_i, buf=buf, sr=sr, name=name,
+                         path=path, bpm=0.0, conf=0.0,
+                         slices=np.zeros(0, dtype=np.int64), analysing=True)
         self.on_done(track_i, {
-            "peaks": dsp.peaks(buf, 2048),
             "frames": buf.shape[0], "sr": sr, "channels": buf.shape[1],
+            "name": name, "stage": "playable",
+            "ms_decode": round(t_decode * 1000, 1),
+        })
+
+        t1 = time.perf_counter()
+        pk = dsp.peaks(buf, 2048)
+        self.on_done(track_i, {"peaks": pk, "stage": "waveform",
+                               "ms_peaks": round((time.perf_counter() - t1) * 1000, 1)})
+
+        t2 = time.perf_counter()
+        bpm, conf = dsp.estimate_bpm(buf, sr)
+        t3 = time.perf_counter()
+        pts, method = dsp.slice_points(buf, sr, want_slices)
+        t4 = time.perf_counter()
+        self.engine.post("track.analysis", i=track_i, bpm=bpm, conf=conf,
+                         slices=pts)
+        self.on_done(track_i, {
             "bpm": bpm, "conf": conf, "slices": pts.tolist(),
-            "slice_method": method, "name": os.path.basename(path),
+            "slice_method": method, "stage": "analysed",
+            "ms_bpm": round((t3 - t2) * 1000, 1),
+            "ms_slices": round((t4 - t3) * 1000, 1),
+            "ms_total": round((t4 - t0) * 1000, 1),
         })
 
     def variant_async(self, track_i: int, mode: str):

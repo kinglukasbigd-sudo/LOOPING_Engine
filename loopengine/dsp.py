@@ -124,13 +124,22 @@ def peaks(buf: np.ndarray, buckets: int = 2048) -> np.ndarray:
     return out
 
 
-def onset_envelope(buf: np.ndarray, sr: int, win: int = 1024, hop: int = 256):
-    """Spectral flux. Returns (env, hop) — half-wave rectified magnitude rise."""
+def onset_envelope(buf: np.ndarray, sr: int, win: int = 1024, hop: int = 256,
+                   max_bins: int = 16384):
+    """Spectral flux. Returns (env, hop) — half-wave rectified magnitude rise.
+
+    The hop widens for long files so the envelope length is bounded. At a
+    fixed hop a four-minute track produced a 45000-bin envelope and 1.8 s of
+    work, paid twice because bpm and slicing each called this separately.
+    """
     mono = buf.mean(axis=1) if buf.ndim > 1 and buf.shape[1] > 1 else buf[:, 0]
     n = mono.shape[0]
     if n < win * 2:
         return np.zeros(1, dtype=np.float32), hop
     frames = 1 + (n - win) // hop
+    if frames > max_bins:
+        hop = int(np.ceil((n - win) / float(max_bins)))
+        frames = 1 + (n - win) // hop
     idx = np.arange(win)[None, :] + hop * np.arange(frames)[:, None]
     w = np.hanning(win).astype(np.float32)
     mag = np.abs(np.fft.rfft(mono[idx] * w, axis=1)).astype(np.float32)
@@ -176,8 +185,15 @@ def slice_points(buf: np.ndarray, sr: int, want: int = 16):
     return (np.arange(want, dtype=np.int64) * step), "equal"
 
 
-def estimate_bpm(buf: np.ndarray, sr: int, lo: float = 70.0, hi: float = 180.0):
-    """Length-first, autocorrelation second. Returns (bpm, confidence 0..1)."""
+def estimate_bpm(buf: np.ndarray, sr: int, lo: float = 70.0, hi: float = 180.0,
+                 max_seconds: float = 30.0):
+    """Length-first, autocorrelation second. Returns (bpm, confidence 0..1).
+
+    Only the first `max_seconds` are analysed when the fallback is needed.
+    Tempo does not become more certain with more material, and the
+    autocorrelation was quadratic in envelope length: a four-minute track cost
+    4.7 s, nearly all of it in np.correlate over 45000 bins.
+    """
     n = buf.shape[0]
     dur = n / float(sr)
     if dur <= 0.05:
@@ -194,7 +210,8 @@ def estimate_bpm(buf: np.ndarray, sr: int, lo: float = 70.0, hi: float = 180.0):
     if best is not None and best[1] < 0.12:
         return round(best[0], 2), 0.92
 
-    env, hop = onset_envelope(buf, sr)
+    window = buf[:int(max_seconds * sr)] if dur > max_seconds else buf
+    env, hop = onset_envelope(window, sr)
     if env.size < 16:
         return (round(best[0], 2), 0.4) if best else (0.0, 0.0)
     env = env - env.mean()

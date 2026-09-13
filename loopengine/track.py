@@ -26,7 +26,7 @@ class Track:
         "src", "variants", "mode", "loop_start", "loop_end", "phase",
         "playing", "reverse", "mute", "solo", "gain", "pan", "speed",
         "xfade", "slices", "bpm", "bpm_conf", "peak", "rms", "_g", "_gl",
-        "_gr", "_w", "fired", "queued",
+        "_gr", "_w", "fired", "queued", "analysing",
     )
 
     def __init__(self, index: int, blocksize: int):
@@ -61,10 +61,12 @@ class Track:
         self._w = None
         self.fired = 0             # bumped when a queued change lands
         self.queued = None         # human-readable label of what's pending
+        self.analysing = False     # buffer is in and playable; bpm/slices pending
 
     # -- loading -----------------------------------------------------------
     def load(self, buf: np.ndarray, sr: int, name: str, path: str,
-             bpm: float, conf: float, slices: np.ndarray, xfade_ms: float = 6.0):
+             bpm: float, conf: float, slices: np.ndarray, xfade_ms: float = 6.0,
+             analysing: bool = False):
         self.src = buf
         self.variants = {"STEREO": buf}
         self.mode = "STEREO"
@@ -76,6 +78,7 @@ class Track:
         self.bpm = bpm
         self.bpm_conf = conf
         self.slices = slices
+        self.analysing = analysing
         self.loop_start = 0
         self.loop_end = self.frames
         self.phase = 0.0
@@ -232,4 +235,5 @@ class Track:
             "rms": round(min(1.5, self.rms), 4),
             "queued": self.queued,
             "fired": self.fired,
+            "analysing": self.analysing,
         }
