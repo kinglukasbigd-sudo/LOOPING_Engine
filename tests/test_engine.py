@@ -270,6 +270,45 @@ def t_latency_budget():
           lat["output_ms_source"][:38])
 
 
+def t_queue_wait_scales_with_the_block_period():
+    """p99 queue wait is one callback period, whatever the period is.
+
+    A press arrives at an arbitrary moment inside the period, so the wait to
+    be picked up is uniform over it: mean ~= half, p99 ~= one. Measured on
+    hardware at 48000, where pipewire negotiates its quantum to whatever the
+    client asks and there is nothing to match:
+
+        256  block  5.333  p99  5.272  cpu 15.4%  0 xruns
+        512  block 10.667  p99 10.620  cpu  8.3%  0 xruns
+       1024  block 21.333  p99 21.180  cpu  5.2%  0 xruns
+
+    Larger blocks buy CPU and cost responsiveness, linearly, with no xrun
+    benefit to offset it.
+    """
+    import random
+    import time as _t
+    for bs in (128, 512):
+        e = Engine(samplerate=SR, blocksize=bs, offline=True).start()
+        _t.sleep(0.2)
+        block_ms = bs / SR * 1000.0
+        random.seed(3)
+        for _ in range(120):
+            e.post("track.gain", i=0, v=0.5)
+            _t.sleep(random.uniform(0.0, block_ms * 3 / 1000.0))
+        lat = e.latency()
+        v = e._lat[:e._lat_n].copy()
+        e.stop()
+        check("block %d: block_ms is the period" % bs,
+              abs(lat["block_ms"] - block_ms) < 0.01,
+              "%.3f ms" % lat["block_ms"])
+        check("block %d: mean wait is about half a period" % bs,
+              block_ms * 0.3 < v.mean() < block_ms * 0.75,
+              "mean %.3f of %.3f" % (v.mean(), block_ms))
+        check("block %d: p99 does not exceed two periods" % bs,
+              float(np.percentile(v, 99)) < block_ms * 2.0,
+              "p99 %.3f" % np.percentile(v, 99))
+
+
 def t_measured_output_overrides_the_reported_one():
     """Once a loopback figure exists it must win everywhere, and say so."""
     e = Engine(samplerate=SR, blocksize=256, offline=True).start()
@@ -370,6 +409,7 @@ if __name__ == "__main__":
                t_quantise_lands_on_the_bar, t_quantum_off_is_immediate,
                t_rate_conversion, t_reverse, t_pads_overlap, t_limiter,
                t_analysis, t_no_nans, t_latency_budget,
+               t_queue_wait_scales_with_the_block_period,
                t_measured_output_overrides_the_reported_one,
                t_capture_is_preallocated_and_records,
                t_xruns_are_timestamped_not_just_counted,

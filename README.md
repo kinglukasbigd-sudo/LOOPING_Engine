@@ -187,6 +187,28 @@ published, in `/api/latency`, the console report and the header:
 
 The header shows the p95 one and says so in the label: `PATH p95`.
 
+### Block size
+
+pipewire negotiates its graph quantum to whatever the client asks for, so
+there is no fixed quantum to match. At 48000, 30 s per size, 400 presses at
+arbitrary phases:
+
+| block | block ms | xruns | p50 | p95 | p99 | callback CPU | pw quantum |
+|---|---|---|---|---|---|---|---|
+| 256 | 5.333 | 0 | 2.629 | 5.090 | 5.272 | 15.4% | 256 |
+| 512 | 10.667 | 0 | 5.724 | 10.220 | 10.620 | 8.3% | 512 |
+| 1024 | 21.333 | 0 | 10.696 | 20.261 | 21.180 | 5.2% | 1024 |
+
+The queue wait is uniform over the callback period at every size — mean about
+half a period, p99 about one — so the whole path scales linearly:
+press-to-callback worst case runs 10.6, 21.3, 42.5 ms.
+
+There is no tail left to buy off. Zero xruns at every size, and the p99 that
+used to sit near two block periods was the resampler, not the block size.
+Larger blocks buy CPU and cost responsiveness with nothing to offset it, so
+256 stays the default: 4× the responsiveness of 1024 for 3× the CPU, and at
+15.4% CPU is not the constraint.
+
 ### The output stage is measured, not reported
 
 PortAudio's stream latency is not a measurement. Opening the stream at several
