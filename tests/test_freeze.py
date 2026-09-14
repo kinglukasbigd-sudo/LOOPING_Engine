@@ -156,12 +156,151 @@ def t_a_tiny_region_can_still_be_escaped():
           (t.loop_start, t.loop_end) == (0, t.frames))
 
 
+def t_stopping_cannot_start_a_track():
+    """The other half of the stopped-clock rule, and the worse half.
+
+    "A stopped clock has no edges" made a queued LAUNCH fire at the instant of
+    pressing stop. Tracks are not gated on the transport, so the track did not
+    merely arm — it started, and it was audible with the transport stopped.
+    Pressing STOP made sound.
+    """
+    e, t = loaded()
+    e.post("transport.quantum", v=QUANTA.index(16.0))    # 4BAR, a long wait
+    e.post("transport.start")
+    e.render_offline(4096)
+    e.post("track.play", i=0)
+    e.render_offline(512)
+    check("the launch is genuinely waiting while the clock runs",
+          len(e._pending) == 1 and not t.playing,
+          "pending=%d playing=%s" % (len(e._pending), t.playing))
+
+    e.post("transport.stop")
+    out = e.render_offline(2048)
+    check("stopping does not start the track",
+          not t.playing, "track.playing=%s" % t.playing)
+    check("and the queue is empty rather than stranded",
+          len(e._pending) == 0, "pending=%d" % len(e._pending))
+    check("nothing is audible after a stop",
+          float(np.abs(out).max()) == 0.0, "peak %.4f" % float(np.abs(out).max()))
+
+
+def t_a_cancelled_launch_does_not_come_back():
+    """Cancelled means gone, not deferred — the stranding hazard again."""
+    e, t = loaded()
+    e.post("transport.quantum", v=BAR)
+    e.post("transport.start")
+    e.render_offline(4096)
+    e.post("track.play", i=0)
+    e.render_offline(512)
+    e.post("transport.stop")
+    e.render_offline(512)
+    e.post("transport.start")
+    e.render_offline(SR * 3)                    # well past several bars
+    check("restarting does not resurrect the cancelled launch",
+          not t.playing and len(e._pending) == 0,
+          "playing=%s pending=%d" % (t.playing, len(e._pending)))
+
+
+def t_a_cancelled_launch_says_so_rather_than_pretending_it_landed():
+    """A silent revert is worse than a freeze; so is a false confirmation."""
+    e, t = loaded()
+    e.post("transport.quantum", v=BAR)
+    e.post("transport.start")
+    e.render_offline(4096)
+    e.post("track.play", i=0)
+    e.render_offline(512)
+    fired_before = t.fired
+    check("the row shows what it is waiting to do", t.queued == "START", str(t.queued))
+    e.post("transport.stop")
+    e.render_offline(512)
+    check("the label clears when the queue is cancelled",
+          t.queued is None, str(t.queued))
+    check("and the row does not flash as though it landed",
+          t.fired == fired_before, "fired %d -> %d" % (fired_before, t.fired))
+    check("the panel reports an empty queue",
+          e.snapshot()["pending"] == 0 and e.snapshot()["pending_ms"] == 0)
+
+
+def t_a_stop_keeps_the_edits_and_drops_only_the_moments():
+    """Task 14 must survive Task 22: an edit still lands, a launch does not."""
+    e, t = loaded()
+    e.post("transport.quantum", v=BAR)
+    e.post("transport.start")
+    e.render_offline(4096)
+    e.post("track.loop", i=0, ls=100, le=5000)      # a state
+    e.post("track.play", i=0)                       # a moment
+    e.render_offline(512)
+    check("both are waiting", len(e._pending) == 2, "pending=%d" % len(e._pending))
+    e.post("transport.stop")
+    e.render_offline(512)
+    check("the edit lands, because an edit describes how a thing should be",
+          (t.loop_start, t.loop_end) == (100, 5000),
+          str((t.loop_start, t.loop_end)))
+    check("the launch does not, because there is no moment to land on",
+          not t.playing, "playing=%s" % t.playing)
+    check("and nothing is left in the queue either way",
+          len(e._pending) == 0, "pending=%d" % len(e._pending))
+
+
+def t_a_queued_key_is_cancelled_by_a_stop_too():
+    """Keys queue on the same grid and lose it the same way."""
+    e, t = loaded()
+    e.post("transport.quantum", v=BAR)
+    e.post("transport.start")
+    e.render_offline(4096)
+    e.post("pad.take", i=0, track=0)
+    e.render_offline(256)
+    e.post("pad.trigger.q", i=0)
+    e.render_offline(512)
+    check("the key is armed while the clock runs",
+          e.snapshot()["pads_pending"][0] is True)
+    e.post("transport.stop")
+    e.render_offline(512)
+    check("and disarmed by the stop, not fired by it",
+          e.snapshot()["pads_pending"][0] is False
+          and e.snapshot()["pads_on"][0] is False)
+
+
+def t_the_wait_the_panel_shows_is_an_honest_upper_bound():
+    """What the drag overlay's deadline is built on.
+
+    The overlay keeps showing the hand's region until the engine echoes it,
+    with a deadline of max(4s, pending_ms + 2s). A fixed 4s expired mid-wait
+    at 4BAR and snapped the readout back to a number the engine was about to
+    replace. That fix is only sound if pending_ms never UNDER-reports the real
+    wait, so assert the property the UI leans on, at the longest quantum.
+    """
+    e, t = loaded()
+    e.post("transport.quantum", v=QUANTA.index(16.0))
+    e.post("transport.start")
+    e.render_offline(4096)
+    e.post("track.loop", i=0, ls=100, le=5000)
+    e.render_offline(256)
+    claimed_ms = e.snapshot()["pending_ms"]
+    bar4_ms = 60.0 / e.transport.bpm * 16.0 * 1000.0
+    check("a 4BAR wait is reported, not rounded away",
+          claimed_ms > 4000.0,
+          "%.0f ms — a fixed 4 s deadline expires inside it" % claimed_ms)
+    check("and it never claims more than the quantum itself",
+          claimed_ms <= bar4_ms + 1, "%.0f of %.0f ms" % (claimed_ms, bar4_ms))
+    e.render_offline(int(claimed_ms / 1000.0 * SR) + 4096)
+    check("the change lands within the wait it reported",
+          (t.loop_start, t.loop_end) == (100, 5000),
+          str((t.loop_start, t.loop_end)))
+
+
 if __name__ == "__main__":
     for fn in (t_a_stopped_clock_has_no_boundaries, t_queue_never_strands_on_stop,
                t_a_stale_command_cannot_revert_a_later_edit,
                t_a_drag_does_not_pile_up, t_pending_reports_its_own_wait,
                t_quantum_off_and_never_started_still_apply_at_once,
-               t_a_tiny_region_can_still_be_escaped):
+               t_a_tiny_region_can_still_be_escaped,
+               t_stopping_cannot_start_a_track,
+               t_a_cancelled_launch_does_not_come_back,
+               t_a_cancelled_launch_says_so_rather_than_pretending_it_landed,
+               t_a_stop_keeps_the_edits_and_drops_only_the_moments,
+               t_a_queued_key_is_cancelled_by_a_stop_too,
+               t_the_wait_the_panel_shows_is_an_honest_upper_bound):
         try:
             fn()
         except Exception as exc:

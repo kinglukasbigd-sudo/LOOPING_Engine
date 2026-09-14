@@ -568,12 +568,15 @@ function renderState() {
   setText($('#quantum'), QUANTUM_LABELS[settled('quantum', S.quantum_i)]);
   const pend = $('#pending');
   /* A silent wait is indistinguishable from a crash. Say what is waiting
-     and how long is left, so a long quantum reads as patience not a hang. */
-  setText(pend, S.pending
-    ? `${S.pending} queued — fires in ${(S.pending_ms / 1000).toFixed(1)} s`
+     and how long is left, so a long quantum reads as patience not a hang.
+     One predicted depth, and every other queue mark on the panel derives
+     from it, so they cannot disagree with each other for a frame. */
+  const depth = settled('pending', S.pending);
+  setText(pend, depth
+    ? `${depth} queued — fires in ${(S.pending_ms / 1000).toFixed(1)} s`
       + ` (${S.quantum.toLowerCase()})`
     : 'nothing queued');
-  pend.classList.toggle('armed', S.pending > 0);
+  pend.classList.toggle('armed', depth > 0);
   setText($('#master-db'), dB(S.master));
   if (document.activeElement !== $('#master')) $('#master').value = S.master;
 
@@ -602,7 +605,7 @@ function renderState() {
       'aria-pressed', settled(`${i}.solo`, t.solo));
     el.querySelector('[data-t="rev"]').setAttribute('aria-pressed', t.rev);
     const q = el.querySelector('.c-q');
-    const queued = settled(`${i}.queued`, t.queued);
+    const queued = depth === 0 ? null : settled(`${i}.queued`, t.queued);
     setText(q, queued ? queued.slice(0, 3) : (t.playing ? '▮' : ''));
     q.classList.toggle('armed', !!queued);
     if (lastFired[i] !== undefined && t.fired !== lastFired[i]) {
@@ -623,7 +626,8 @@ function renderState() {
     const mapped = p.loaded;
     el.classList.toggle('unmapped', !mapped);
     el.classList.toggle('on', !!S.pads_on[i]);
-    el.classList.toggle('armed', !!(S.pads_pending && S.pads_pending[i]));
+    el.classList.toggle('armed',
+      depth !== 0 && !!(S.pads_pending && S.pads_pending[i]));
     /* The file this key holds, not where it came from. A key keeps its
        audio when the track moves on, so "T5/S01" named a track that may
        since have been replaced — provenance that goes stale and reads as
@@ -650,7 +654,9 @@ function renderInspector() {
   if (!t) return;
   const m = t.kind === 'track'
     ? ((S.meta && (S.meta[focus] || S.meta[String(focus)])) || {}) : {};
-  const queued = t.kind === 'track'
+  /* Same predicted depth as the rows, so the inspector's STATE line cannot
+     say "START queued" a beat after the rail says nothing is queued. */
+  const queued = t.kind === 'track' && settled('pending', S.pending) !== 0
     ? settled(`${focus}.queued`, t.queued) : null;
   const [ls, le] = liveLoop(t.i, t);
   setText($('#i-title'), t.title);
@@ -1104,6 +1110,14 @@ const ACT = {
     const v = !(S && settled('transport', S.playing));
     $('[data-act="run"]').setAttribute('aria-pressed', v);   // paint first
     predict('transport', v);
+    /* A stop empties the queue either way — launches are cancelled, edits
+       fire at once — so predict nought rather than let the rows go on
+       promising a START that has already been called off. Writing the DOM
+       here would not survive: the render pass runs on the next telemetry
+       tick and rebuilds these from the snapshot, which is still the one from
+       before the stop. Predicting is the only thing that outlives it, and
+       this is a fact about the engine's rule, not a guess. */
+    if (!v) predict('pending', 0);
     send({ op: 'transport.toggle' });
   },
   rtz:     () => send({ op: 'transport.rewind' }),

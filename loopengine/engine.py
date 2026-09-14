@@ -36,6 +36,25 @@ QUANTIZED = {
     "track.loop", "track.loop.scale", "track.loop.nudge", "track.loop.slice",
 }
 
+# Of those, the ones that are a MOMENT rather than a state. An edit describes
+# how a thing should be and can land whenever; a launch describes when a thing
+# should happen, and without a running clock there is no when.
+#
+# This is the other half of "a stopped clock has no edges". That invariant is
+# right for an edit — it stopped a queue stranding and reverting a later one.
+# Applied to a launch it inverted the meaning of the transport: a start queued
+# at 4BAR fired at the instant of pressing STOP, and since tracks are not gated
+# on the transport, STOP started a track and it was audible.
+#
+# So stopping the clock cancels everything that was waiting for it. The queue
+# is a promise about a future moment on the grid; stopping the grid means that
+# moment never comes. The alternative — some queued work surviving a stop and
+# some not — is a rule nobody can hold at speed in the dark, and it is the
+# stranded-command hazard again with a different name.
+LAUNCH = {
+    "track.play", "track.stop", "track.toggle", "track.retrig", "pad.trigger.q",
+}
+
 
 class Pad:
     """A key slot. Holds its OWN audio and its own region.
@@ -389,6 +408,31 @@ class Engine:
                 "track.loop.slice": "LOOP"}.get(op, op)
         self.pending_labels = [o for o, _ in self._pending]
 
+    def _cancel_launches(self):
+        """Drop queued moments; keep queued edits.
+
+        Called the instant the clock stops, from inside _drain, so it lands
+        before the callback's drain-on-stop reaches the rest of the queue.
+        Nothing is marked as having fired, because nothing did — the labels
+        simply clear, which is the panel saying the queue is gone rather than
+        pretending it landed.
+        """
+        if not self._pending:
+            return
+        kept = [(o, k) for (o, k) in self._pending if o not in LAUNCH]
+        if len(kept) == len(self._pending):
+            return
+        self._pending = kept
+        self._relabel()
+
+    def _relabel(self):
+        """Rebuild the queued labels from the queue itself."""
+        for t in self.tracks:
+            t.queued = None
+        for op, kw in self._pending:
+            self._label_pending(op, kw)
+        self.pending_labels = [o for o, _ in self._pending]
+
     def _fire(self):
         pend, self._pending = self._pending, []
         for op, kw in pend:
@@ -532,8 +576,11 @@ class Engine:
             tr.playing = True
         elif op == "transport.stop":
             tr.playing = False
+            self._cancel_launches()
         elif op == "transport.toggle":
             tr.playing = not tr.playing
+            if not tr.playing:
+                self._cancel_launches()
         elif op == "transport.rewind":
             tr.pos = 0
             for t in self.tracks:
