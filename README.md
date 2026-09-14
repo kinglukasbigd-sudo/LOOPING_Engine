@@ -4,7 +4,10 @@ Multi-track loop mangler. Load stems or whole tracks, set loop points, launch
 them in time with each other, and hit slices back on a 4×4 pad grid.
 
 - numpy does the maths, PortAudio does the clock, a local page is the panel.
-- 8 loop tracks + 16 pads over a 16-voice pool, all sounding at once.
+- 8 loop tracks + 16 keys over a 16-voice pool, all sounding at once.
+- A key holds its own audio and its own region, and keeps both when the track
+  it came from is replaced. Each key shows the file it holds, and lights the
+  span of that file across its own bottom rule.
 - Loop launches, stops, reverses and pad hits land on a quantum boundary,
   sample-accurate. The block is split at the boundary; nothing waits for the
   next callback.
@@ -335,7 +338,7 @@ that reason. The captures are the honest artefact; a person has to play them.
 
 ## Traps
 
-Four things that looked like they worked. Each cost real time, and each
+Six things that looked like they worked. Each cost real time, and each
 produces a confident wrong answer rather than an error, which is why they are
 written down rather than left in a commit message.
 
@@ -366,6 +369,22 @@ into the callback:
 
 *`capture()` allocates one buffer up front. The same worst case then runs
 clean: 0 over 13051 blocks.*
+
+**A fix that was right for one kind of work and wrong for the other.** "A
+stopped clock has no edges" unstuck a queue that could strand and later revert
+an edit. Applied to a *launch* it inverted the transport: a start queued at
+4BAR fired at the instant of pressing STOP, and because tracks are not gated on
+the transport, the track did not merely arm — it started, at peak 0.1595 with
+the transport stopped. Pressing STOP made sound. *The queue holds two kinds of
+work. An edit says how a thing should be and can land whenever; a launch says
+when a thing should happen, and a stopped clock has no when. Stopping cancels
+every launch and still lands every edit.*
+
+**Painting the panel in the click handler does not survive the render pass.**
+Clearing the queue rail on stop worked for one frame and was then rebuilt from
+the telemetry snapshot taken *before* the stop — so a STOP was followed by half
+a second of the panel still promising a START. *Feedback before the send has to
+be a prediction the render pass consults, not a write it overwrites.*
 
 **`pgrep` takes one pattern.** `pgrep -a pipewire wireplumber pulseaudio`
 matches nothing and exits quietly, which produced a confident "pipewire is not
@@ -416,14 +435,32 @@ it: it cannot honestly show the change applied, so it shows `REV` in accent
 straight away and lets the engine replace that with the real queued state. A
 loop drag redraws from the pointer and hands back once the engine agrees.
 
-**Dominance.** One element at 44 px (the transport position, and the only
-accent), one at 26 px (tempo), everything else at 17 px and below. The
+**Dominance.** One element at 44 px (the transport position), one at 26 px
+(tempo), everything else at 17 px and below. One accent carries exactly three
+roles and nothing else may borrow it: the playhead, what is queued, and what is
+chosen — the region, whether that is ink in a waveform or a lit span on a key's
+own rule. The token used to say "max 2 elements per screen", which a panel with
+eight rows that can each queue exceeded long ago; the discipline that actually
+held is the role count. The
 waveform is the largest area, so its ink sits at 0.84 to keep the playhead and
 the loop rules above it.
 
-**Stillness.** Nothing moves after load. 332 elements sampled through four
-seconds of live telemetry and again across eight focus changes, a file load, a
-decode error and the browser opening: zero moved, zero resized. Every value
+**Stillness.** Nothing moves after load. 487 elements sampled across the help
+mode toggling on and off, focus moving between tracks, between keys and from a
+key back to a track, a key's region dragged long, short and down to a sliver,
+a real file loading into an empty track, and the transport starting: zero
+moved, zero resized, and every label restored exactly after help.
+
+The probe earns its keep. It found the inspector's subject title sizing to its
+content — the display face has no tabular figures, so TRACK 1 is 41.22px and
+TRACK 8 is 43.30px, and moving the focus one row down shifted the title and
+pushed the spacer beside it. It found the empty-state panel assigning
+`innerHTML` on every pass, destroying and rebuilding its key caps sixty times a
+second to arrive at identical text. Both were invisible by eye.
+
+A baseline taken while `requestAnimationFrame` is throttled compares a stale
+DOM to a settled one, so the probe forces a render and a layout flush before
+sampling. That artifact has cost real time twice. Every value
 that changes while running has a reserved box measured in `ch` of its own face.
 Webfonts load `font-display: optional`, so the face either wins the first paint
 or waits for the next run — it never swaps mid-session.
