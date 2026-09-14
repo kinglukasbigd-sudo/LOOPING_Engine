@@ -240,8 +240,23 @@ body.helping [data-help] { opacity: 1; }
 /* Each row carries its own envelope: a real cell sharing the row's hairlines,
    not a panel floating over anything. The plot is cached per track and
    blitted; a drag moves the region and the playhead, never the peaks. */
-.c-wave { display: block; height: 100%; overflow: hidden; }
+.c-wave { display: block; height: 100%; overflow: hidden; position: relative; }
 .c-wave canvas { display: block; width: 100%; height: 100%; }
+/* THE PART OF THE FILE IN VIEW. This row's envelope is the whole file, so it
+   is the overview for the panel below: while the panel is zoomed into this
+   track, the row's bottom rule lights across the span being shown — the key
+   hairline's pattern, on a rule that is already there. Ink, not accent:
+   accent's roles are the playhead, what is queued and what is chosen, and
+   where you happen to be looking is none of those. Ink also keeps it apart
+   from the accent loop drawn in this same envelope. Unlit at the whole file,
+   where it would say nothing. Floor and clamp as on the keys. */
+.c-wave.zoomed::after {
+  content: ""; position: absolute; bottom: 0;
+  left: min(var(--vs, 0%), calc(100% - var(--s2)));
+  right: var(--ve, 100%);
+  min-width: var(--s2);
+  height: var(--hair); background: var(--fg); pointer-events: none;
+}
 .c-gain, .c-pan { display: flex; align-items: center; }
 .c-gain .slider, .c-pan .slider { margin: 0; }
 .c-btns { display: flex; gap: var(--s1); }
@@ -290,17 +305,27 @@ body.helping [data-help] { opacity: 1; }
    was never stable even across tracks — the display face does not use tabular
    figures, so TRACK 1 is 41.22px and TRACK 8 is 43.30px. Moving the focus a
    row down shifted the title and pushed the spacer beside it. */
-/* Fixed, never shrinking. The bar overflows at narrow widths, and a shrinking
-   title redistributes by CONTENT length — so every track name of a different
-   length moved the mode buttons along with it. */
-#w-title { flex: 0 0 var(--w-title); }
+/* The title yields first, and only to the viewport. At 1280 and 1366 px the
+   bar could not hold a fixed 210px title beside three frame readouts and four
+   buttons: EJECT, then LOAD and PICK, slid under the bar's clipped edge. The
+   title is the one item whose content is repeated elsewhere — the inspector
+   names the file — so it gives up width before a number or a button does,
+   down to a floor that still names the subject.
+   What used to go wrong was a title shrinking by CONTENT length, so a longer
+   track name pushed the mode buttons along. That cannot happen here: the basis
+   is 0 and the minimum is explicit, so the width comes from the viewport alone
+   and no name can move anything. It takes nearly all the slack (1000 : 1)
+   until it is full width; the info line gets the rest. */
+#w-title { flex: 1000 1 0; min-width: var(--w-title-min); max-width: var(--w-title); }
 #i-title { flex: 0 0 var(--w-subject); }   /* clears TRACK 8, the widest */
-/* The only flexible item in the bar, so it absorbs all the slack and its own
-   box stays put: everything either side of it is fixed. */
+/* The second flexible item: it has what the title leaves once the title is at
+   full width. Everything it says is in the inspector as well. */
 #w-info { overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
           flex: 1 1 0; min-width: 0; text-align: right; }
-/* The two region figures, each in a box wide enough for any sample offset a
-   file can hold, so dragging never shoves the buttons along. */
+/* The three region figures, each in a box wide enough for any offset the
+   default memory ceiling admits, so dragging never shoves the buttons along.
+   This used to say "any sample offset a file can hold" at 9ch — true up to
+   9,999,999. A four-minute file's out point, 11,520,000, did not fit. */
 .rgn { display: flex; align-items: baseline; gap: var(--s2); flex: none; }
 .rgn i {
   font-style: normal; font-family: var(--font-display);
@@ -308,7 +333,7 @@ body.helping [data-help] { opacity: 1; }
 }
 .rgn b {
   font-weight: 500; font-size: var(--t2); font-variant-numeric: tabular-nums;
-  display: inline-block; width: 9ch; text-align: right;
+  display: inline-block; width: var(--w-frames); text-align: right;
 }
 .rgn.aimed b { color: var(--accent); }
 .spacer { flex: 1; }
@@ -319,7 +344,20 @@ body.helping [data-help] { opacity: 1; }
 /* ── WAVEFORM ────────────────────────────────────────────────────────── */
 #wave { display: flex; flex-direction: column; }
 .canvas-wrap { position: relative; flex: 1; min-height: 0; }
-#wcanvas { display: block; width: 100%; height: 100%; cursor: col-resize; }
+/* THE LOOP RUNS OFF THIS EDGE. Zoomed in, the region can start or end outside
+   the view; the panel's rule on that side lights — the one the rail shares on
+   the left, the panel's own on the right — rather than an arrow or a floating
+   marker. Accent, because it is the region: the chosen part of the file,
+   carrying on past what the view shows. Painted over the rule itself, so it is
+   the existing hairline changing state, not a second line beside it. */
+.canvas-wrap::before, .canvas-wrap::after {
+  position: absolute; top: 0; bottom: 0; width: var(--hair);
+  background: var(--accent); pointer-events: none;
+}
+.canvas-wrap::before { left: calc(-1 * var(--hair)); }
+.canvas-wrap::after  { right: calc(-1 * var(--hair)); }
+.canvas-wrap.off-l::before, .canvas-wrap.off-r::after { content: ""; }
+#wcanvas { display: block; width: 100%; height: 100%; cursor: grab; }
 #wcanvas { --wave-ink: 0.84; }   /* texture recedes; markers stay at full ink */
 .empty {
   position: absolute; inset: 0; display: flex; align-items: center;

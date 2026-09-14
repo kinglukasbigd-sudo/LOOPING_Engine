@@ -124,6 +124,61 @@ def peaks(buf: np.ndarray, buckets: int = 2048) -> np.ndarray:
     return out
 
 
+# Frames folded to mono per pass in peaks_range. A wide request re-buckets in
+# groups of about this size, so it never allocates the whole span at once.
+RANGE_CHUNK = 1 << 20
+
+
+def _mono(x: np.ndarray) -> np.ndarray:
+    """The same mix peaks() plots: the channel mean, or the only channel."""
+    return x.mean(axis=1) if x.ndim > 1 and x.shape[1] > 1 else x[:, 0]
+
+
+def peaks_range(buf: np.ndarray, start: int, end: int, buckets: int):
+    """The envelope of [start, end) at exactly `buckets` buckets, for a zoomed view.
+
+    peaks() is taken once per load over the whole file. Stretched over a short
+    span its buckets are wider than the pixels showing them — a blocky outline
+    of the wrong material, which looks like it works. This re-buckets from the
+    buffer the server already holds, over the visible span only.
+
+    Bucket k covers [start + k*span//buckets, start + (k+1)*span//buckets), so
+    every sample lands in exactly one bucket and none is dropped. (peaks()
+    rounds its hop down and discards up to hop-1 samples at the end of the
+    file.) When the span divides evenly the result is exactly
+    peaks(buf[start:end], buckets).
+
+    Returns ("env", float32 (buckets, 2)) of min/max, or — once the span holds
+    no more samples than there are buckets — ("samples", float32 (span,)): the
+    min and max of one sample are that sample, and the line through the
+    samples is the thing worth looking at.
+    """
+    n = buf.shape[0]
+    start = max(0, min(int(start), n))
+    end = max(start, min(int(end), n))
+    buckets = max(1, int(buckets))
+    span = end - start
+    if span == 0:
+        return "env", np.zeros((0, 2), dtype=np.float32)
+    if span <= buckets:
+        return "samples", np.ascontiguousarray(_mono(buf[start:end]), dtype=np.float32)
+
+    # span > buckets, so consecutive edges differ by at least one frame
+    edges = start + (np.arange(buckets + 1, dtype=np.int64) * span) // buckets
+    out = np.empty((buckets, 2), dtype=np.float32)
+    k = 0
+    while k < buckets:
+        s0 = int(edges[k])
+        j = int(np.searchsorted(edges, s0 + RANGE_CHUNK, side="right")) - 1
+        j = min(max(j, k + 1), buckets)       # one bucket wider than a chunk: take it whole
+        mono = _mono(buf[s0:int(edges[j])])
+        idx = edges[k:j] - s0
+        out[k:j, 0] = np.minimum.reduceat(mono, idx)
+        out[k:j, 1] = np.maximum.reduceat(mono, idx)
+        k = j
+    return "env", out
+
+
 def onset_envelope(buf: np.ndarray, sr: int, win: int = 1024, hop: int = 256,
                    max_bins: int = 16384):
     """Spectral flux. Returns (env, hop) — half-wave rectified magnitude rise.

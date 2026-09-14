@@ -36,6 +36,8 @@ function codeOf(e) {
     if (/[a-z]/i.test(k)) return 'Key' + k.toUpperCase();
     if (/[0-9]/.test(k)) return 'Digit' + k;
     if (k in SHIFTED_DIGITS) return 'Digit' + SHIFTED_DIGITS[k];
+    if (k === '=' || k === '+') return 'Equal';
+    if (k === '-' || k === '_') return 'Minus';
   }
   return k.charAt(0).toUpperCase() + k.slice(1);
 }
@@ -56,7 +58,7 @@ const HELP = {
   master:  ['OUTPUT LEVEL',      'Final level before the limiter. The ladder below is what is leaving.'],
   num:     ['N',                 'Track number. Hold SHIFT and press its key to mute or launch it.'],
   source:  ['FILE ON THIS TRACK','The loaded file. Drop one here, or press L to browse.'],
-  wave:    ['THIS FILE',         'The whole file. Orange is the part that loops; the line is the playhead.'],
+  wave:    ['THIS FILE',         'Orange loops. Scroll zooms at the pointer, drag moves, SHIFT-drag draws a loop.'],
   bpm:     ['DETECTED TEMPO',    'Measured from the file. Shown only — it never moves a loop point.'],
   loop:    ['LOOP LENGTH',       'How long the looping part is, in beats of this file.'],
   level:   ['OUTPUT',            'How loud this track is right now. Fills solid if it clips.'],
@@ -77,6 +79,12 @@ let focusKey = 0;          // which key, when focusKind is 'key'
 let assignArmed = false;   // next key pressed takes the focused track's region
 let editKeys = false;      // clicking a pad focuses it instead of firing it
 const padPeaks = {};       // pad index -> its own envelope
+/* What the waveform panel is looking at: one view per track and per key,
+   kept in this page and never sent to the engine. See view.js. */
+const views = View.store();
+const ranges = new Map();  // subject -> accurate peaks for its zoomed view
+const rangeQ = View.coalescer(2000);
+let rangeTimer = 0;
 let awaitingPick = null;   // track index whose slot is waiting on the dialog
 let localError = '';       // picker trouble, shown where engine errors go
 
@@ -188,6 +196,23 @@ paints its own result locally instead of waiting for the engine to answer.`);
       const f = new Float32Array(n * 2);
       for (let i = 0; i < n * 2; i++) f[i] = raw[i] / 127;
       if (kind === 0x11) peaks[t] = f; else padPeaks[t] = f;
+    } else if (kind === 0x13) {                            // peaks for a zoomed view
+      const samples = (v.getUint8(3) & 1) === 1;
+      const req = v.getUint32(4), start = v.getUint32(8), end = v.getUint32(12);
+      const frames = v.getUint32(16), count = v.getUint32(20);
+      const vals = count * (samples ? 1 : 2);
+      const data = new Float32Array(vals);
+      for (let k = 0; k < vals; k++) data[k] = v.getInt16(24 + 2 * k, true) / 32767;
+      const r = rangeQ.answer(req, performance.now());
+      // a reply for a file that has since been replaced is dropped
+      if (r.accepted && frames === r.accepted.frames) {
+        ranges.set(r.accepted.kind + ':' + r.accepted.i, {
+          ink: r.accepted.ink,
+          src: samples ? View.samplesSource(data, start)
+                       : View.envelopeSource(data, start, end),
+        });
+      }
+      if (r.next) sendRange(r.next);
     }
   };
 }
@@ -217,6 +242,7 @@ function paintRegion(i, ls, le) {
   dragLoop = { i, ls, le, kind: focusKind };
   setText($('#w-in'), ls.toLocaleString('en-US'));
   setText($('#w-out'), le.toLocaleString('en-US'));
+  setText($('#w-len'), (le - ls).toLocaleString('en-US'));
   // the key's own rule is feedback too, and it is a frame away otherwise
   if (focusKind === 'key' && S && S.pads[i]) {
     const el = $$('#padgrid .pad')[i];
@@ -295,6 +321,100 @@ function liveLoop(i, t) {
   return [t.ls, t.le];
 }
 
+/* ── the view ───────────────────────────────────────────────────────────
+   Wires view.js to whatever the panel shows. A view is keyed to the slot and
+   the file in it; the accurate peaks are keyed to that AND the source mode. */
+function subjectId(t) { return t.kind + ':' + t.i; }
+function fileSig(t) { return t.name + '|' + t.frames; }
+function inkId(t) { return subjectId(t) + '|' + fileSig(t) + '|' + t.mode; }
+function cssW() { return $('#wcanvas').clientWidth || 1; }
+
+function viewOf(t) {
+  return View.clamp(views.get(subjectId(t), fileSig(t), t.frames), t.frames, cssW());
+}
+
+/* The whole visible result of a zoom or pan is this store write: the next
+   frame plots from data already in the page. Accurate peaks are asked for
+   once the view settles — never per wheel tick. */
+function setView(t, v) {
+  views.set(subjectId(t), fileSig(t), View.clamp(v, t.frames, cssW()));
+  scheduleRange();
+}
+
+function scheduleRange() {
+  clearTimeout(rangeTimer);
+  rangeTimer = setTimeout(askRange, 120);
+}
+
+/* Only when the load-time envelope cannot resolve the view. Wider than one of
+   its buckets per column, reducing it per column is already exact to its
+   buckets, and asking would cost the server a pass over millions of frames
+   for nothing. */
+function askRange() {
+  const t = subject();
+  if (!t || !t.loaded || !t.peaks) return;
+  const Wd = $('#wcanvas').width || 1;              // device px: a bucket per column
+  const v = viewOf(t);
+  const ov = View.overviewSource(t.peaks, t.frames);
+  if (!ov || (v.ve - v.vs) / Wd >= View.bucketSize(ov)) return;
+  const start = Math.floor(v.vs), end = Math.ceil(v.ve);
+  const have = ranges.get(subjectId(t));
+  if (have && have.ink === inkId(t) && have.src.start === start && have.src.end === end) return;
+  const d = rangeQ.ask({ kind: t.kind, i: t.i, start, end, buckets: Wd,
+                         frames: t.frames, ink: inkId(t) }, performance.now());
+  if (d) sendRange(d);
+}
+
+function sendRange(d) {
+  send({ op: 'peaks.range', kind: d.kind, i: d.i, start: d.start, end: d.end,
+         buckets: d.buckets, req: d.req });
+}
+
+function rangeFor(t) {
+  const e = ranges.get(subjectId(t));
+  return e && e.ink === inkId(t) ? e.src : null;
+}
+
+function zoomKey(factor) {
+  const t = subject();
+  if (!t || !t.loaded) return;
+  const W = cssW();
+  setView(t, View.zoomAt(viewOf(t), t.frames, W, W / 2, factor));
+}
+function fitLoopKey() {
+  const t = subject();
+  if (!t || !t.loaded) return;
+  const [ls, le] = liveLoop(t.i, t);
+  setView(t, View.fitLoop(ls, le, t.frames, cssW()));
+}
+function fitFileKey() {
+  const t = subject();
+  if (t && t.loaded) setView(t, View.whole(t.frames));
+}
+
+/* The strip's envelope is the whole file — the overview. While the panel is
+   zoomed into this track, the strip's bottom rule lights across the span in
+   view. Written only when that span changes, like the key regions. */
+const miniView = [];
+function paintMinimap(cell, i, t) {
+  let k = '';
+  if (cell && t.loaded && focusKind === 'track' && i === focus) {
+    const v = views.peek('track:' + i, fileSig(t));
+    if (v && !View.isWhole(v, t.frames)) {
+      k = (v.vs / t.frames * 100).toFixed(3) + '%:' +
+          ((1 - v.ve / t.frames) * 100).toFixed(3) + '%';
+    }
+  }
+  if (!cell || miniView[i] === k) return;
+  miniView[i] = k;
+  cell.classList.toggle('zoomed', k !== '');
+  if (k) {
+    const [a, b] = k.split(':');
+    cell.style.setProperty('--vs', a);
+    cell.style.setProperty('--ve', b);
+  }
+}
+
 function beatFrames(t) {
   const bpm = t.bpm > 0 ? t.bpm : (S ? S.bpm : 124);
   return 60 / bpm * t.sr;
@@ -310,6 +430,7 @@ function loopBeats(t) {
 function buildStrips(n) {
   const host = $('#strips');
   host.innerHTML = '';
+  miniView.length = 0;         // fresh rows carry no view span yet
   for (let i = 0; i < n; i++) {
     const el = document.createElement('div');
     el.className = 'strip empty-row';
@@ -618,6 +739,7 @@ function renderState() {
     const [wls, wle] = liveLoop(i, Object.assign({}, t, { kind: 'track' }));
     drawMini(el.querySelector('.c-wave canvas'), 't' + i, peaks[i],
              t.frames, wls, wle, t.phase, t.playing);
+    paintMinimap(el.querySelector('.c-wave'), i, t);
   });
 
   S.pads.forEach((p, i) => {
@@ -688,8 +810,12 @@ function renderInspector() {
   const [rls, rle] = liveLoop(t.i, t);
   setText($('#w-in'), t.loaded ? rls.toLocaleString('en-US') : '—');
   setText($('#w-out'), t.loaded ? rle.toLocaleString('en-US') : '—');
+  /* Length beside the points: hunting a short part, how long it is is the
+     number you steer by, not where it starts. */
+  setText($('#w-len'), t.loaded ? (rle - rls).toLocaleString('en-US') : '—');
+  // IN and OUT can be aimed; LEN is a result, never a handle
   $$('.rgn').forEach((el, k) =>
-    el.classList.toggle('aimed', t.loaded && handleFocus === (k ? 'out' : 'in')));
+    el.classList.toggle('aimed', k < 2 && t.loaded && handleFocus === (k ? 'out' : 'in')));
   setText($('#w-info'), !t.loaded ? 'no file'
     : `${t.sr} Hz · ${t.ch} ch · ${secs(t.frames, t.sr)} · `
       + (t.analysing ? 'analysing' :
@@ -746,7 +872,7 @@ function renderInspector() {
    source mode or the canvas size changes. Plot it once into an offscreen
    canvas and blit that each frame; a drag then moves the region and the
    handles only, and never re-walks the peak array. */
-const waveCache = { key: '', dim: null, hot: null };
+const waveCache = { key: '', dim: null, hot: null, pk: null, rng: null };
 /* One cache per small strip, keyed the same way as the big panel. Eight rows
    and sixteen pads redrawing peaks every frame would be sixty times the work
    of plotting them once; these blit. */
@@ -756,11 +882,12 @@ function drawMini(cv, id, pk, frames, ls, le, phase, lit) {
   const [g, W, H] = fit(cv);
   g.fillStyle = C.bg; g.fillRect(0, 0, W, H);
   if (!pk || !frames) return;
-  const key = [id, W, H, pk.length].join(':');
+  const key = [id, W, H, frames].join(':');
   let c = miniCache[id];
-  if (!c || c.key !== key) {
-    c = miniCache[id] = { key, dim: plot(W, H, C.fg, pk),
-                          hot: plot(W, H, C.accent, pk) };
+  // keyed on the peaks array itself: two files the same length made the same key
+  if (!c || c.key !== key || c.pk !== pk) {
+    c = miniCache[id] = { key, pk, dim: plot(W, H, C.fg, pk, frames),
+                          hot: plot(W, H, C.accent, pk, frames) };
   }
   g.globalAlpha = DIM2;
   g.drawImage(c.dim, 0, 0);
@@ -782,39 +909,86 @@ function drawMini(cv, id, pk, frames, ls, le, phase, lit) {
   }
 }
 
-function waveKey(t, W, H) {
-  return [t.kind, t.i, t.mode, t.frames, W, H,
-          (t.peaks || []).length].join(':');
+/* Ink for W columns into a canvas (made, or reused), from min/max columns —
+   View.columns, which never skips a bucket. Transparent ground. */
+function inkColumns(cv, W, H, colour, col) {
+  cv = cv || document.createElement('canvas');
+  if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+  const g = cv.getContext('2d');
+  g.clearRect(0, 0, W, H);
+  const mid = H / 2;
+  g.fillStyle = colour;
+  for (let x = 0; x < W; x++) {
+    const lo = col[2 * x], hi = col[2 * x + 1];
+    if (Number.isNaN(lo)) continue;
+    const yTop = mid - hi * mid * 0.92;
+    g.fillRect(x, yTop, 1, Math.max(1, (mid - lo * mid * 0.92) - yTop));
+  }
+  return cv;
 }
 
-function plot(W, H, colour, pk) {
-  const cv = document.createElement('canvas');
-  cv.width = W; cv.height = H;                  // transparent ground: ink only
+/* The samples themselves, once the view is below about one sample per pixel.
+   At three pixels a sample each one also gets a point, so a transient's first
+   sample is somewhere you can put a handle. */
+function inkLine(cv, W, H, colour, pts, pxPerSample, r) {
+  cv = cv || document.createElement('canvas');
+  if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
   const g = cv.getContext('2d');
-  if (pk) {
-    const n = pk.length / 2, mid = H / 2;
+  g.clearRect(0, 0, W, H);
+  const mid = H / 2;
+  g.strokeStyle = colour;
+  g.lineWidth = Math.max(1, Math.round(r));
+  g.beginPath();
+  for (let j = 0; j < pts.length; j += 2) {
+    const y = mid - pts[j + 1] * mid * 0.92;
+    if (j) g.lineTo(pts[j], y); else g.moveTo(pts[j], y);
+  }
+  g.stroke();
+  if (pxPerSample >= 3 * r) {
+    const d = Math.max(2, Math.round(2 * r));
     g.fillStyle = colour;
-    for (let x = 0; x < W; x++) {
-      const k = Math.min(n - 1, Math.floor(x / W * n));
-      const yTop = mid - pk[k * 2 + 1] * mid * 0.92;
-      const yBot = mid - pk[k * 2] * mid * 0.92;
-      g.fillRect(x, yTop, 1, Math.max(1, yBot - yTop));
+    for (let j = 0; j < pts.length; j += 2) {
+      g.fillRect(Math.round(pts[j] - d / 2),
+                 Math.round(mid - pts[j + 1] * mid * 0.92 - d / 2), d, d);
     }
   }
   return cv;
 }
 
-/* Two layers, both plotted only when the key changes: the excluded ends in
+/* A strip's whole-file envelope. */
+function plot(W, H, colour, pk, frames) {
+  return inkColumns(null, W, H, colour,
+    View.columns(View.whole(frames), W, [View.overviewSource(pk, frames)]));
+}
+
+/* Two layers, plotted only when what they show changes: the excluded ends in
    ink and the chosen region in accent. Clipping one over the other tints the
-   samples themselves. Compositing a colour over the region instead would fill
-   the whole rectangle, because the ground beneath it is opaque. */
-function buildWaveCache(t, W, H) {
-  const key = waveKey(t, W, H);
-  if (waveCache.key !== key) {
-    waveCache.dim = plot(W, H, C.fg, t.peaks);
-    waveCache.hot = plot(W, H, C.accent, t.peaks);
-    waveCache.key = key;
+   samples themselves; compositing a colour over the region would fill the
+   whole rectangle, because the ground beneath it is opaque.
+
+   The layers belong to a VIEW now: they rebuild when the view moves — at most
+   once a frame, from data already here — and a handle drag, which moves no
+   view, still only blits. They are keyed on the peaks arrays themselves and
+   the file's name, not on a length: every kit loop is 185,806 frames, so a
+   key built from length alone could not tell one loaded file from the next. */
+function buildWaveCache(t, W, H, v, rng, r) {
+  const key = [inkId(t), W, H, v.vs, v.ve].join(':');
+  if (waveCache.key === key && waveCache.pk === t.peaks && waveCache.rng === rng) {
+    return waveCache;
   }
+  const line = rng ? View.sampleLine(v, W, rng) : null;
+  if (line) {
+    const pps = W / (v.ve - v.vs);
+    waveCache.dim = inkLine(waveCache.dim, W, H, C.fg, line, pps, r);
+    waveCache.hot = inkLine(waveCache.hot, W, H, C.accent, line, pps, r);
+  } else {
+    const col = View.columns(v, W, [View.overviewSource(t.peaks, t.frames), rng]);
+    waveCache.dim = inkColumns(waveCache.dim, W, H, C.fg, col);
+    waveCache.hot = inkColumns(waveCache.hot, W, H, C.accent, col);
+  }
+  waveCache.key = key;
+  waveCache.pk = t.peaks;
+  waveCache.rng = rng;
   return waveCache;
 }
 
@@ -876,38 +1050,52 @@ function drawWave() {
   const cv = $('#wcanvas');
   const [g, W, H, r] = fit(cv);
   g.fillStyle = C.bg; g.fillRect(0, 0, W, H);
-  if (!S) return;
-  const t = subject();
-  if (!t || !t.loaded) return;
-  const [lsF, leF] = liveLoop(t.i, t);
-  const x0 = Math.round(lsF / t.frames * W);
-  const x1 = Math.round(leF / t.frames * W);
+  const wrap = cv.parentElement;
+  const t = S ? subject() : null;
+  if (!t || !t.loaded) { lightEdges(wrap, false, false); return; }
+  const v = viewOf(t);
+  const span = v.ve - v.vs;
+  const X = (f) => (f - v.vs) / span * W;           // source sample -> device px
 
-  // beat grid, behind everything
+  // a different subject, source mode or width may want peaks this view lacks
+  const ink = inkId(t) + '@' + W;
+  if (ink !== lastInk) { lastInk = ink; scheduleRange(); }
+
+  const [lsF, leF] = liveLoop(t.i, t);
+  const x0 = Math.round(X(lsF));
+  const x1 = Math.round(X(leF));
+
+  /* Beat grid, behind everything: only the beats in view, and only bars once
+     beats crowd closer than a few pixels. Across a whole four-minute file every
+     beat was a line two pixels from the last. */
   const bf = beatFrames(t);
-  if (bf > 0 && t.frames > 0) {
-    const nb = Math.floor(t.frames / bf);
-    for (let b = 0; b <= nb; b++) {
-      const x = Math.round(b * bf / t.frames * W);
+  if (bf > 0) {
+    const pxBeat = bf / span * W;
+    const every = pxBeat >= 4 * r ? 1 : (pxBeat * 4 >= 4 * r ? 4 : 0);
+    if (every) {
       g.fillStyle = C.n2;
-      g.globalAlpha = (b % 4 === 0) ? 1 : DIM1;
-      g.fillRect(x, 0, 1, H);
+      const last = Math.floor(v.ve / bf);
+      for (let b = Math.ceil(Math.ceil(v.vs / bf) / every) * every; b <= last; b += every) {
+        g.globalAlpha = (b % 4 === 0) ? 1 : DIM1;
+        g.fillRect(Math.round(X(b * bf)), 0, 1, H);
+      }
       g.globalAlpha = 1;
     }
   }
 
   // excluded ends: the ink layer, dimmed
-  const cache = buildWaveCache(t, W, H);
+  const cache = buildWaveCache(t, W, H, v, rangeFor(t), r);
   g.globalAlpha = DIM2;
   g.drawImage(cache.dim, 0, 0);
   g.globalAlpha = 1;
 
-  // the chosen region: the accent layer, clipped to it — the samples
-  // themselves change colour, nothing is filled behind them
-  if (x1 > x0) {
+  // the chosen region: the accent layer, clipped to the part of it in view —
+  // the samples themselves change colour, nothing is filled behind them
+  const c0 = Math.max(0, x0), c1 = Math.min(W, x1);
+  if (c1 > c0) {
     g.save();
     g.beginPath();
-    g.rect(x0, 0, x1 - x0, H);
+    g.rect(c0, 0, c1 - c0, H);
     g.clip();
     g.drawImage(cache.hot, 0, 0);
     g.restore();
@@ -920,16 +1108,18 @@ function drawWave() {
     g.fillStyle = C.fg;
     g.globalAlpha = DIM1;
     for (const sl of m.slices) {
-      const x = Math.round(sl / t.frames * W);
+      if (sl < v.vs || sl > v.ve) continue;
+      const x = Math.round(X(sl));
       g.fillRect(x, 0, 1, 7 * r);
       g.fillRect(x, H - 7 * r, 1, 7 * r);
     }
     g.globalAlpha = 1;
   }
 
-  // the two handles
+  // the two handles, wherever they are in view
   const hw = Math.max(3, Math.round(4 * r));
   for (const [x, edge] of [[x0, 'in'], [x1, 'out']]) {
+    if (x < -hw || x > W + hw) continue;
     const lit = (grabbed === edge) || (handleFocus === edge);
     g.fillStyle = C.accent;
     g.fillRect(edge === 'in' ? x : x - 1, 0, 1, H);
@@ -940,19 +1130,32 @@ function drawWave() {
 
   /* Playhead in ink, not accent: the region already carries accent here, and
      the moving thing has to stay legible on top of it. */
-  const xp = Math.round(t.phase / t.frames * W);
-  g.fillStyle = C.bg;
-  g.fillRect(xp - Math.round(r), 0, Math.round(r) * 3, H);
-  g.fillStyle = C.fg;
-  g.fillRect(xp, 0, Math.max(1, Math.round(r)), H);
+  if (t.phase >= v.vs && t.phase <= v.ve) {
+    const xp = Math.round(X(t.phase));
+    g.fillStyle = C.bg;
+    g.fillRect(xp - Math.round(r), 0, Math.round(r) * 3, H);
+    g.fillStyle = C.fg;
+    g.fillRect(xp, 0, Math.max(1, Math.round(r)), H);
+  }
 
   g.font = `${T1 * r}px ${FONT_TEXT}`;
   g.fillStyle = C.fg;
   g.globalAlpha = DIM1;
-  g.fillText(`in ${lsF}`, x0 + 4 * r, H - 6 * r);
-  const outLabel = `out ${leF}`;
-  g.fillText(outLabel, Math.max(0, x1 - g.measureText(outLabel).width - 4 * r), 14 * r);
+  if (x0 >= 0 && x0 < W) g.fillText(`in ${lsF}`, x0 + 4 * r, H - 6 * r);
+  if (x1 > 0 && x1 <= W) {
+    const outLabel = `out ${leF}`;
+    g.fillText(outLabel, Math.max(0, x1 - g.measureText(outLabel).width - 4 * r), 14 * r);
+  }
   g.globalAlpha = 1;
+
+  // the loop runs off an edge of the view: that side's rule lights
+  lightEdges(wrap, lsF < v.vs, leF > v.ve);
+}
+
+let lastInk = '';
+function lightEdges(wrap, left, right) {
+  wrap.classList.toggle('off-l', left);
+  wrap.classList.toggle('off-r', right);
 }
 
 function drawScope() {
@@ -1006,21 +1209,41 @@ function drawScope() {
 function frame() {
   renderState();
   drawWave();
+  const lost = rangeQ.tick(performance.now());   // a reply that never came
+  if (lost) sendRange(lost);
   drawScope();
   drawMasterMeter();
   requestAnimationFrame(frame);
 }
 
 /* ── waveform interaction ───────────────────────────────────────────── */
+/* Handles edit the loop; everything else moves the view. Drag the background
+   to pan, scroll to zoom where you point, SHIFT-drag to draw a new loop —
+   plain drag used to draw one, and panning took that gesture. Every pixel
+   goes through the current view on its way to a sample, so a region set
+   while zoomed lands on the samples under the pointer, never on pixels of
+   the whole file. */
 (function wireWave() {
   const cv = $('#wcanvas');
   let drag = null;
-  const xToFrame = (e) => {
+  const px = (e) => {
     const b = cv.getBoundingClientRect();
-    const t = subject();
-    if (!t) return 0;
-    return Math.max(0, Math.min(t.frames,
-      Math.round((e.clientX - b.left) / b.width * t.frames)));
+    return [e.clientX - b.left, b.width];
+  };
+  const frameAt = (e, t, v) => {
+    const [x, W] = px(e);
+    return View.xToFrame(x, W, v, t.frames);
+  };
+  /* Which handle, if either, is within 8 px. The closer one wins; on a region
+     narrower than a pixel, the side the pointer is on. */
+  const nearHandle = (e, t, v) => {
+    const [x, W] = px(e);
+    const [ls, le] = liveLoop(t.i, t);
+    const xl = View.frameToX(ls, W, v), xr = View.frameToX(le, W, v);
+    const dl = Math.abs(x - xl), dr = Math.abs(x - xr);
+    if (Math.min(dl, dr) >= 8) return null;
+    if (dl === dr) return x <= xl ? 'in' : 'out';
+    return dl < dr ? 'in' : 'out';
   };
   const commit = (ls, le) => {
     paintRegion(subject().i, ls, le);           // paint first, always
@@ -1030,39 +1253,44 @@ function frame() {
   cv.addEventListener('mousemove', (e) => {
     const t = subject();
     if (drag || !t || !t.loaded) return;
-    const b = cv.getBoundingClientRect();
-    const grab = 8 / b.width * t.frames;
-    const f = xToFrame(e);
-    const [ls, le] = liveLoop(t.i, t);
-    cv.style.cursor = (Math.abs(f - ls) < grab || Math.abs(f - le) < grab)
-      ? 'col-resize' : 'crosshair';
+    cv.style.cursor = nearHandle(e, t, viewOf(t)) ? 'col-resize'
+      : (e.shiftKey ? 'crosshair' : 'grab');
   });
 
   cv.addEventListener('mousedown', (e) => {
     const t = subject();
     if (!t || !t.loaded) return;
-    const b = cv.getBoundingClientRect();
-    const grab = 8 / b.width * t.frames;
-    const f = xToFrame(e);
+    const v = viewOf(t);
+    const edge = nearHandle(e, t, v);
     const [ls, le] = liveLoop(t.i, t);
-    if (Math.abs(f - ls) < grab) { drag = { edge: 'in', le }; handleFocus = 'in'; }
-    else if (Math.abs(f - le) < grab) { drag = { edge: 'out', ls }; handleFocus = 'out'; }
-    else { drag = { edge: 'new', anchor: f }; handleFocus = 'out'; }
-    grabbed = drag.edge;                        // lights the handle this frame
+    if (edge === 'in') { drag = { edge: 'in', le }; handleFocus = 'in'; }
+    else if (edge === 'out') { drag = { edge: 'out', ls }; handleFocus = 'out'; }
+    else if (e.shiftKey) { drag = { edge: 'new', anchor: frameAt(e, t, v) }; handleFocus = 'out'; }
+    else { drag = { edge: 'pan', x: e.clientX, v }; cv.style.cursor = 'grabbing'; }
+    if (drag.edge !== 'pan') grabbed = drag.edge;   // lights the handle this frame
     e.preventDefault();
   });
 
   window.addEventListener('mousemove', (e) => {
     if (!drag || !S) return;
-    const f = xToFrame(e);
+    const t = subject();
+    if (!t || !t.loaded) return;
+    if (drag.edge === 'pan') {
+      // from where the drag began, not from the last move: no drift
+      setView(t, View.pan(drag.v, t.frames, px(e)[1], e.clientX - drag.x));
+      return;
+    }
+    const f = frameAt(e, t, viewOf(t));
     if (drag.edge === 'in') commit(Math.min(f, drag.le - 64), drag.le);
     else if (drag.edge === 'out') commit(drag.ls, Math.max(f, drag.ls + 64));
     else commit(Math.min(drag.anchor, f), Math.max(drag.anchor, f));
   });
 
   window.addEventListener('mouseup', () => {
+    const panned = drag && drag.edge === 'pan';
     drag = null;
     grabbed = null;
+    if (panned) { cv.style.cursor = 'grab'; return; }
     if (dragLoop) {
       const held = dragLoop;
       // The engine may hold a region change until the next quantum, so keep
@@ -1074,8 +1302,9 @@ function frame() {
       const grace = Math.max(4000, (S ? S.pending_ms : 0) + 2000);
       const settle = setInterval(() => {
         if (dragLoop !== held) return clearInterval(settle);
-        const t = S && S.tracks[held.i];
-        if (t && t.ls === held.ls && t.le === held.le) {
+        // a key's echo arrives in the pads, not in the track with its number
+        const echo = S && (held.kind === 'key' ? S.pads[held.i] : S.tracks[held.i]);
+        if (echo && echo.ls === held.ls && echo.le === held.le) {
           dragLoop = null; clearInterval(settle);
         }
       }, 120);
@@ -1083,20 +1312,37 @@ function frame() {
     }
   });
 
+  /* The wheel zooms around the sample under the pointer; SHIFT, or a sideways
+     swipe, pans. Nothing is sent: the next frame plots from what is already
+     here, and accurate peaks follow once the view settles. */
+  cv.addEventListener('wheel', (e) => {
+    const t = subject();
+    if (!t || !t.loaded) return;
+    e.preventDefault();
+    const [x, W] = px(e);
+    const unit = e.deltaMode === 1 ? 16 : (e.deltaMode === 2 ? W : 1);
+    const dx = e.deltaX * unit, dy = e.deltaY * unit;
+    const v = viewOf(t);
+    if (e.shiftKey || Math.abs(dx) > Math.abs(dy)) {
+      setView(t, View.pan(v, t.frames, W, -(Math.abs(dx) > Math.abs(dy) ? dx : dy)));
+    } else {
+      setView(t, View.zoomAt(v, t.frames, W, x, Math.pow(2, dy / 240)));
+    }
+  }, { passive: false });
+
   cv.addEventListener('dblclick', () => {
     const t = subject();
     if (t && t.loaded) commit(0, t.frames);
   });
 })();
 
-/* Arrows nudge the focused handle. Fine is one pixel of the plot so a press
-   is always visible; coarse is a beat of the file's own tempo. */
+/* Arrows nudge the focused handle. Fine is one pixel of the VIEW, so a press
+   is always visible and gets finer as you zoom in; coarse is a beat of the
+   file's own tempo. (It was one pixel of the whole file whatever the view.) */
 function nudgeHandle(dir, coarse) {
   const t = subject();
   if (!t || !t.loaded) return;
-  const W = $('#wcanvas').getBoundingClientRect().width || 1;
-  const step = coarse ? Math.round(beatFrames(t))
-                      : Math.max(1, Math.round(t.frames / W));
+  const step = coarse ? Math.round(beatFrames(t)) : View.nudgeStep(viewOf(t), cssW());
   let [ls, le] = liveLoop(t.i, t);
   if (handleFocus === 'in') ls = Math.min(ls + dir * step, le - 64);
   else le = Math.max(le + dir * step, ls + 64);
@@ -1235,6 +1481,13 @@ window.addEventListener('keydown', (e) => {
       else if (browserOpen()) closeBrowser();
       else send({ op: 'panic' });
       break;
+    /* The view. 9 and 0 sit beside - and =, so fit and zoom are one run of
+       four keys next to the loop keys 5-8. F and L, the obvious letters,
+       are already a pad and the file browser. None of these reach the engine. */
+    case 'Digit9': fitLoopKey(); break;
+    case 'Digit0': fitFileKey(); break;
+    case 'Equal': case 'NumpadAdd': zoomKey(0.5); break;
+    case 'Minus': case 'NumpadSubtract': zoomKey(2); break;
     case 'Slash': if (e.shiftKey) { e.preventDefault(); ACT.help(); } break;
   }
 });

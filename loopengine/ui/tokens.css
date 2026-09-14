@@ -82,7 +82,9 @@
      panel is running; without a fixed box its neighbours would move. */
   --w-device: 26ch;   /* the output device name        */
   --w-title:  210px;  /* the waveform panel title      */
+  --w-title-min: 80px; /* ...when the bar is short: "TRACK 6 —" and a little name */
   --w-subject: 44px;  /* TRACK 8 / KEY W — the inspector's subject */
+  --w-frames:  11ch;  /* 134,217,728: an offset in the longest stereo file 1024 MB holds */
   --w-label:   58px;  /* an inspector row label        */
   --w-big:     78px;  /* the tempo readout             */
   --w-mid:     52px;  /* the master readout            */

@@ -28,6 +28,7 @@ UI_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui")
 BIN_SCOPE = 0x10
 BIN_PEAKS = 0x11
 BIN_PEAKS_PAD = 0x12
+BIN_PEAKS_RANGE = 0x13  # re-bucketed span for one panel's zoomed view
 
 OP_CONT, OP_TEXT, OP_BIN, OP_CLOSE, OP_PING, OP_PONG = 0x0, 0x1, 0x2, 0x8, 0x9, 0xA
 
@@ -290,7 +291,7 @@ def make_handler(app):
                         client.send(OP_PONG, data)
                     elif op == OP_TEXT:
                         try:
-                            app.handle(json.loads(data.decode()))
+                            app.handle(json.loads(data.decode()), client)
                         except Exception as e:
                             app.engine.last_error = "%s: %s" % (
                                 type(e).__name__, e)

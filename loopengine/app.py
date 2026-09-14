@@ -11,7 +11,9 @@ import numpy as np
 
 from . import picker
 from .loader import Loader, AUDIO_EXT
-from .server import Hub, new_token, OP_BIN, BIN_SCOPE, BIN_PEAKS, BIN_PEAKS_PAD
+from .server import (Hub, new_token, OP_BIN, BIN_SCOPE, BIN_PEAKS,
+                     BIN_PEAKS_PAD, BIN_PEAKS_RANGE)
+from . import dsp
 from .track import MODES
 
 MAX_UPLOAD = 200 * 1024 * 1024
@@ -208,8 +210,10 @@ class App:
         return {"devices": out, "current": self.engine.device_name}
 
     # -- command router ----------------------------------------------------
-    def handle(self, msg):
+    def handle(self, msg, client=None):
         op = msg.get("op", "")
+        if op == "peaks.range":
+            return self._peaks_range(msg, client)
         if op == "load":
             i, path = int(msg["i"]), msg["path"]
             if not self._inside_roots(path):
@@ -252,6 +256,50 @@ class App:
                 or op in ("panic", "probe"):
             kw = {k: v for k, v in msg.items() if k != "op"}
             self.engine.post(op, **kw)
+
+    # Re-bucketing is bounded per request; the panel coalesces, so one panel
+    # holds at most one of these at a time.
+    RANGE_BUCKETS_MAX = 8192
+
+    def _peaks_range(self, msg, client):
+        """The envelope of one panel's zoomed view, from the buffer held here.
+
+        A read, not a command: the engine never sees it, and the view it
+        describes lives only in the panel that asked. So the reply goes to
+        that panel alone — broadcasting it would hand every other open panel
+        peaks for a window it is not looking at.
+
+        Header (network order): kind 0x13, subject (0 track / 1 key), index,
+        flags (1 = raw samples, 0 = min/max pairs), then u32 req, start, end,
+        frames, count. Values follow as little-endian int16 — int8 staircases
+        a sample line visibly once you are zoomed far enough to see one.
+        """
+        if client is None:
+            return
+        try:
+            key = msg.get("kind") == "key"
+            i = int(msg.get("i", -1))
+            start, end = int(msg.get("start", 0)), int(msg.get("end", 0))
+            buckets = int(msg.get("buckets", 0))
+            req = int(msg.get("req", 0)) & 0xFFFFFFFF
+        except (TypeError, ValueError, AttributeError):
+            return
+        slots = self.engine.pads if key else self.engine.tracks
+        if not 0 <= i < len(slots):
+            return
+        buf = slots[i].buf                  # a track's is its active source mode
+        if buf is None:
+            return
+        frames = buf.shape[0]
+        buckets = max(16, min(buckets, self.RANGE_BUCKETS_MAX))
+        start = max(0, min(start, frames))
+        end = max(start, min(end, frames))
+        what, data = dsp.peaks_range(buf, start, end, buckets)
+        q = np.clip(np.rint(data * 32767.0), -32767, 32767).astype("<i2")
+        head = struct.pack("!BBBBIIIII", BIN_PEAKS_RANGE, 1 if key else 0, i & 0xFF,
+                           1 if what == "samples" else 0, req, start, end,
+                           frames, data.shape[0])
+        client.send(OP_BIN, head + q.tobytes())
 
     # -- convenience -------------------------------------------------------
     def load_kit(self, d):

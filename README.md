@@ -76,13 +76,27 @@ once a device is there — you just can't hear it.
  SHIFT + QWER   mute track 5–8        5 / 6   loop ÷2 / ×2
  SHIFT + ASDF   launch track 1–4      7 / 8   nudge loop ∓1 beat
  SHIFT + ZXCV   launch track 5–8      T G B   tap / quantum / reverse
+                                      9 / 0   fit loop / whole file
+                                      - / =   zoom out / in
                                       TAB L   next track / load
                                       ESC     panic, everything stops
 ```
 
 SHIFT is the FUNC key: hold it and the pad grid becomes the track grid. Double
-click a strip to launch it; drag on the waveform to set the loop; double click
-the waveform to loop the whole file.
+click a strip to launch it.
+
+On the waveform: drag a handle to move that loop point, SHIFT-drag to draw a
+new loop, drag anywhere else to pan, scroll to zoom around the pointer, and
+double click to loop the whole file. Zooming changes nothing you hear and
+sends nothing to the engine. The arrow keys nudge the aimed point by one pixel
+of what you are looking at, so they get finer as you zoom in — at full zoom,
+one sample. While zoomed, the track's row lights the part of the file in view
+on its bottom rule, and if the loop runs past an edge of the view, that edge
+of the panel lights.
+
+`9` and `0` sit beside `-` and `=` so fitting and zooming are one run of four
+keys next to the loop keys `5`–`8`. `F` and `L`, the obvious letters, were
+already a pad and the file browser.
 
 ## Looping a vocal out of a stereo mix
 
@@ -338,7 +352,7 @@ that reason. The captures are the honest artefact; a person has to play them.
 
 ## Traps
 
-Six things that looked like they worked. Each cost real time, and each
+Nine things that looked like they worked. Each cost real time, and each
 produces a confident wrong answer rather than an error, which is why they are
 written down rather than left in a commit message.
 
@@ -385,6 +399,25 @@ Clearing the queue rail on stop worked for one frame and was then rebuilt from
 the telemetry snapshot taken *before* the stop — so a STOP was followed by half
 a second of the panel still promising a START. *Feedback before the send has to
 be a prediction the render pass consults, not a write it overwrites.*
+
+**A cache keyed on a length.** The waveform panel and every strip cached their
+plot under a key built from the track, its mode, its frame count and its number
+of buckets. Every kit loop is 185,806 frames, so loading one over another made
+the same key, and the first file's waveform went on being drawn over the second
+— confirmed against the committed code: new peaks arrived, the key did not
+change, the bitmap was the old file's. *Key a cache on the thing itself — the
+peaks array, the file name — not on a number that happens to describe it.*
+
+**An overview that skipped half the file.** The plot took one envelope bucket
+per pixel, so 2,048 buckets on a ~1,080 px panel drew about half of them. With
+one transient hidden in each of 823 buckets in turn, the overview missed 389.
+It looked like a waveform because most of a waveform survives being thinned.
+*Every column now takes every bucket that overlaps it.*
+
+**A test that blamed correct code.** The check for that fix hid a 0.9 transient
+in a bucket and looked for >= 0.9 in the plot. It found none, in the new plot
+and the old one alike: a Float32Array holds 0.9 as 0.8999999762. *When the new
+code and the old fail a test identically, suspect the test.*
 
 **`pgrep` takes one pattern.** `pgrep -a pipewire wireplumber pulseaudio`
 matches nothing and exits quietly, which produced a confident "pipewire is not
@@ -445,11 +478,15 @@ held is the role count. The
 waveform is the largest area, so its ink sits at 0.84 to keep the playhead and
 the loop rules above it.
 
-**Stillness.** Nothing moves after load. 487 elements sampled across the help
-mode toggling on and off, focus moving between tracks, between keys and from a
-key back to a track, a key's region dragged long, short and down to a sliver,
-a real file loading into an empty track, and the transport starting: zero
-moved, zero resized, and every label restored exactly after help.
+**Stillness.** Nothing moves after load. The current sweep samples 499
+elements, at 1366 px and at 1600 px, across every way of moving the waveform
+view — wheel zoom at the pointer, shift-wheel and drag pans, fit loop, fit
+file, the zoom keys, accurate peaks arriving, a handle dragged while zoomed,
+the readouts growing to an eight-digit offset — plus focus moving between
+tracks and keys whose names differ wildly in length, and help toggling on and
+off: zero moved, zero resized, every label restored exactly after help. The
+sweep before zoom covered a real file load, the transport starting and a key
+region dragged down to a sliver, also at zero.
 
 The probe earns its keep. It found the inspector's subject title sizing to its
 content — the display face has no tabular figures, so TRACK 1 is 41.22px and

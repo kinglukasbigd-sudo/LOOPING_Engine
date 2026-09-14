@@ -102,6 +102,7 @@
       <span class="legend inline" id="w-info">no file</span>
       <span class="rgn"><i>IN</i><b id="w-in">0</b></span>
       <span class="rgn"><i>OUT</i><b id="w-out">0</b></span>
+      <span class="rgn"><i>LEN</i><b id="w-len">0</b></span>
       <button class="btn" data-act="reslice">RESLICE 16</button>
       <button class="btn" data-act="pick">PICK…</button>
       <button class="btn" data-act="browse">LOAD</button>
@@ -166,6 +167,8 @@
       <div class="krow sep"><kbd>↑</kbd><kbd>↓</kbd><span>aim at the in / out handle</span></div>
       <div class="krow"><kbd>←</kbd><kbd>→</kbd><span>nudge it one pixel</span></div>
       <div class="krow"><kbd>⇧</kbd><kbd>←→</kbd><span>nudge it one beat</span></div>
+      <div class="krow sep"><kbd>9</kbd><kbd>0</kbd><span>fit loop / whole file</span></div>
+      <div class="krow"><kbd>-</kbd><kbd>=</kbd><span>zoom out / in</span></div>
       <div class="krow sep"><kbd class="w">CTRL</kbd><span>hold + a key = give it this loop</span></div>
       <div class="krow"><kbd class="w">EDIT</kbd><span>then a key edits, not fires</span></div>
       <div class="krow"><kbd class="w">ESC</kbd><span>panic — everything stops</span></div>
@@ -183,6 +186,7 @@
 
 </div>
 
+<script src="view.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
