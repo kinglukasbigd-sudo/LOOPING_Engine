@@ -91,22 +91,55 @@ def t_analysis_op_touches_nothing_it_should_not():
           t.bpm == 128.0 and t.slices.size == 16 and t.analysing is False)
 
 
-def t_long_file_analysis_is_bounded():
-    """Unbounded, a four-minute track cost 7.6 s and blocked playback."""
-    n = SR * 240
+def _tone(seconds, seed=2):
+    n = SR * seconds
     t = (np.sin(2 * np.pi * 220 * np.arange(n) / SR) * 0.3
-         + np.random.default_rng(2).standard_normal(n) * 0.05).astype(np.float32)
-    big = np.stack([t, t], axis=1)
+         + np.random.default_rng(seed).standard_normal(n) * 0.05).astype(np.float32)
+    return np.stack([t, t], axis=1)
 
-    t0 = time.perf_counter(); dsp.estimate_bpm(big, SR)
-    bpm_ms = (time.perf_counter() - t0) * 1000
-    t0 = time.perf_counter(); pts, _ = dsp.slice_points(big, SR, 16)
-    sl_ms = (time.perf_counter() - t0) * 1000
-    check("tempo on a 4-minute track is well under a second",
-          bpm_ms < 1000, "%.0f ms (was 4695)" % bpm_ms)
-    check("slicing likewise", sl_ms < 1500, "%.0f ms (was 2697)" % sl_ms)
-    check("and slices still span the whole file, not just the window",
-          pts[-1] > n * 0.5, "last slice at %d of %d" % (pts[-1], n))
+
+def _ms(fn, *a):
+    t0 = time.perf_counter()
+    out = fn(*a)
+    return (time.perf_counter() - t0) * 1000.0, out
+
+
+def t_long_file_analysis_is_bounded():
+    """Unbounded, a four-minute track cost 7.6 s and blocked playback.
+
+    What went wrong was quadratic cost in envelope length, so what this has to
+    catch is a return to quadratic — not a particular number of milliseconds.
+    An absolute wall-clock bar cannot do that honestly: `slice_points` on this
+    machine measures 802 ms idle and 1815 ms with the panel running, and the
+    thing competing for the CPU is this application. It flaked against a
+    1500 ms bar for exactly that reason.
+
+    So compare a one-minute file with a four-minute one in the same run. Both
+    measurements take whatever contention is going, and the RATIO does not.
+    Quadratic is 16x, linear is 4x. Generous absolute bounds stay as a
+    backstop, far enough out that load cannot reach them.
+    """
+    short, big = _tone(60), _tone(240)
+
+    bpm_short_ms, _ = _ms(dsp.estimate_bpm, short, SR)
+    bpm_ms, _ = _ms(dsp.estimate_bpm, big, SR)
+    sl_short_ms, _ = _ms(dsp.slice_points, short, SR, 16)
+    sl_ms, (pts, _junk) = _ms(dsp.slice_points, big, SR, 16)
+
+    # tempo caps its window at 30 s, so four times the file is the same work
+    check("tempo cost stops growing once past the analysis window",
+          bpm_ms < bpm_short_ms * 2.0 + 1.0,
+          "%.0f ms for 4 min vs %.0f ms for 1 min" % (bpm_ms, bpm_short_ms))
+    check("slicing grows with length, not with length squared",
+          sl_ms < sl_short_ms * 8.0 + 1.0,
+          "%.1fx for 4x the file (quadratic would be 16x)"
+          % (sl_ms / max(sl_short_ms, 0.001)))
+    check("and neither is anywhere near the old cost",
+          bpm_ms < 2000 and sl_ms < 4000,
+          "bpm %.0f ms (was 4695), slices %.0f ms (was 2697)" % (bpm_ms, sl_ms))
+    check("slices still span the whole file, not just the window",
+          pts[-1] > SR * 240 * 0.5,
+          "last slice at %d of %d" % (pts[-1], SR * 240))
 
     env, hop = dsp.onset_envelope(big, SR)
     check("the onset envelope is bounded by widening the hop",
