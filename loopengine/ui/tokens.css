@@ -44,7 +44,14 @@
   --n1:     #141517;   /* neutral 1 — panel ground  */
   --n2:     #2A2C30;   /* neutral 2 — hairline      */
   --fg:     #D8D5CC;   /* ink                       */
-  --accent: #FF4A0F;   /* MAX 2 ELEMENTS PER SCREEN */
+  /* ONE accent, THREE roles, and nothing else may borrow it:
+       1  the playhead   — where the clock is now
+       2  queued         — what is about to happen
+       3  the region     — the part of a file that is chosen
+     Written as "max 2 elements per screen" when the panel held two controls.
+     A dense multi-track panel exceeded that the moment eight rows could each
+     queue; the discipline that actually held is the role count. */
+  --accent: #FF4A0F;   /* 3 ROLES, NO FOURTH */
 
   /* Dimming is opacity on the ink. Never a new hue. */
   --dim1: 0.55;
@@ -67,7 +74,6 @@
   /* Column templates. Structure, not spacing — declared once, here. */
   --strip-cols: 18px minmax(0, 1fr) 124px 40px 56px 52px 74px 40px 64px 18px;
   --wave-strip: 124px;   /* the per-row envelope */
-  --pad-wave:    13px;   /* the same thing at pad size */
   --meter-w:  4px;
   --fader-h: 10px;
   --pad-gap:  1px;    /* pads share hairlines, so the gap IS the rule */
@@ -76,6 +82,7 @@
      panel is running; without a fixed box its neighbours would move. */
   --w-device: 26ch;   /* the output device name        */
   --w-title:  210px;  /* the waveform panel title      */
+  --w-subject: 44px;  /* TRACK 8 / KEY W — the inspector's subject */
   --w-label:   58px;  /* an inspector row label        */
   --w-big:     78px;  /* the tempo readout             */
   --w-mid:     52px;  /* the master readout            */

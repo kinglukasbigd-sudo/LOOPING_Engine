@@ -217,6 +217,31 @@ function paintRegion(i, ls, le) {
   dragLoop = { i, ls, le, kind: focusKind };
   setText($('#w-in'), ls.toLocaleString('en-US'));
   setText($('#w-out'), le.toLocaleString('en-US'));
+  // the key's own rule is feedback too, and it is a frame away otherwise
+  if (focusKind === 'key' && S && S.pads[i]) {
+    const el = $$('#padgrid .pad')[i];
+    if (el) paintKeySpan(el, i, ls, le, S.pads[i].frames);
+  }
+}
+
+/* A key's region, carried on the rule the key already has. Not a bar and not
+   a readout: the cell's own bottom hairline lights over the part of the file
+   this key holds, so sixteen keys report sixteen regions in sixteen pixels of
+   ink. Two custom properties, on a strip that is out of flow — it cannot move
+   anything, and the write is skipped entirely when the numbers have not
+   changed. */
+const spanCache = [];
+function paintKeySpan(el, i, ls, le, frames) {
+  let a = 0, b = 0;
+  if (frames > 0 && le > ls) {
+    a = Math.max(0, Math.min(1, ls / frames));
+    b = Math.max(a, Math.min(1, le / frames));
+  }
+  const k = a.toFixed(5) + ':' + b.toFixed(5);
+  if (spanCache[i] === k) return;
+  spanCache[i] = k;
+  el.style.setProperty('--rs', (a * 100).toFixed(3) + '%');
+  el.style.setProperty('--re', ((1 - b) * 100).toFixed(3) + '%');
 }
 
 /* One place that knows whether an edit goes to a track or a key. */
@@ -231,7 +256,7 @@ function assignToKey(k) {
     localError = 'Nothing to assign — track ' + (focus + 1) + ' is empty.';
     return;
   }
-  const [ls, le] = liveLoop(focus, t);
+  const [ls, le] = liveLoop(focus, Object.assign({}, t, { kind: 'track' }));
   const el = $$('#padgrid .pad')[k];
   if (el) el.classList.add('hit');            // paint first
   setTimeout(() => el && el.classList.remove('hit'), 160);
@@ -490,14 +515,14 @@ function releasePad(i) {
 function buildPads(n) {
   const host = $('#padgrid');
   host.innerHTML = '';
+  spanCache.length = 0;        // fresh cells carry no span yet
   for (let i = 0; i < n; i++) {
     const b = document.createElement('button');
     b.className = 'pad unmapped';
     b.dataset.i = i;
     b.innerHTML = `<span class="p-key">${PAD_CAPS[i] || i + 1}</span>
                    <span class="p-mode">—</span>
-                   <span class="p-label">unassigned</span>
-                   <canvas class="p-wave"></canvas>`;
+                   <span class="p-label">unassigned</span>`;
     b.addEventListener('mousedown', (e) => {
       if (assignArmed) return assignToKey(i);
       if (editKeys) { focusKind = 'key'; focusKey = i; paintKeyFocus(); return; }
@@ -599,13 +624,14 @@ function renderState() {
     el.classList.toggle('unmapped', !mapped);
     el.classList.toggle('on', !!S.pads_on[i]);
     el.classList.toggle('armed', !!(S.pads_pending && S.pads_pending[i]));
-    setText(el.querySelector('.p-label'), mapped
-      ? `${p.label}  T${p.track + 1}/S${String(p.slice + 1).padStart(2, '0')}`
-      : 'unassigned');
+    /* The file this key holds, not where it came from. A key keeps its
+       audio when the track moves on, so "T5/S01" named a track that may
+       since have been replaced — provenance that goes stale and reads as
+       fact. The filename is the one thing that stays true. */
+    setText(el.querySelector('.p-label'), mapped ? p.name : 'unassigned');
     setText(el.querySelector('.p-mode'), mapped ? p.mode : '—');
-    // the slice this key holds, at pad size
-    drawMini(el.querySelector('.p-wave'), 'p' + i, padPeaks[i],
-             p.frames, p.ls, p.le, -1, false);
+    const [pls, ple] = liveLoop(i, { kind: 'key', i, ls: p.ls, le: p.le });
+    paintKeySpan(el, i, pls, ple, p.frames);
   });
   // the engine owns the pad mode; a reloaded panel adopts it rather than
   // stamping its own default over a running set
@@ -634,13 +660,26 @@ function renderInspector() {
 
   $('#w-empty').hidden = t.loaded;
   if (!t.loaded) {
-    $('#w-empty').innerHTML = t.kind === 'key'
+    /* Written only when the sentence itself changes. Assigning innerHTML every
+       pass destroyed and rebuilt the <kbd> caps sixty times a second to end up
+       with identical text — the same churn as the inspector rows, invisible
+       until the probe reported nodes appearing and disappearing. */
+    const copy = t.kind === 'key'
       ? `Key ${PAD_CAPS[focusKey]} holds nothing yet. Set a loop on a track, `
         + `then hold <kbd>CTRL</kbd> and press this key to give it that loop.`
       : `Track ${focus + 1} is empty. Press <kbd>L</kbd> to pick a file, `
         + `or drop one on this panel.`;
+    if ($('#w-empty')._copy !== copy) {
+      $('#w-empty')._copy = copy;
+      $('#w-empty').innerHTML = copy;
+    }
   }
-  const [rls, rle] = liveLoop(focus, t);
+  /* `t.i`, not `focus`: for a key subject those are different numbers, and
+     indexing the live drag by the track number meant the readouts and the big
+     canvas found no match and fell back to the STORED region — so a key drag
+     painted correctly and then reverted on the next telemetry tick. The edit
+     still landed; you just could not see what you were doing. */
+  const [rls, rle] = liveLoop(t.i, t);
   setText($('#w-in'), t.loaded ? rls.toLocaleString('en-US') : '—');
   setText($('#w-out'), t.loaded ? rle.toLocaleString('en-US') : '—');
   $$('.rgn').forEach((el, k) =>

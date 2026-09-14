@@ -220,6 +220,60 @@ def t_key_state_serialises():
           and snap["rev"] is True, str(snap)[:58])
 
 
+def t_a_key_reports_the_four_numbers_its_rule_is_drawn_from():
+    """The pad no longer draws a waveform; it lights part of its own hairline.
+
+    That mark is computed from exactly four fields of the key's snapshot —
+    name, ls, le, frames — so those four have to describe the KEY and not the
+    track it came from, and they have to stay inside the buffer. A stale
+    `track`/`slice` pair used to be printed on the cell as provenance; it
+    names a track that may since hold something else entirely, which is why
+    the cell shows the filename instead.
+    """
+    e = engine()
+    load(e, 0, tone(220.0, n=SR * 4), "bass.wav")
+    e.post("pad.take", i=2, track=0, ls=SR, le=SR * 2)
+    e.render_offline(256)
+    before = e.pads[2].snapshot(2)
+
+    # the track moves on; the key must not follow it
+    load(e, 0, tone(660.0, n=SR * 3), "keys.wav")
+    after = e.pads[2].snapshot(2)
+
+    check("the key names its own file, not the track's",
+          after["name"] == "bass.wav" and e.tracks[0].name == "keys.wav",
+          "key=%s track=%s" % (after["name"], e.tracks[0].name))
+    check("and its region and length are untouched by the load",
+          (after["ls"], after["le"], after["frames"])
+          == (before["ls"], before["le"], before["frames"]),
+          str((after["ls"], after["le"], after["frames"])))
+
+    span = (after["ls"] / after["frames"], after["le"] / after["frames"])
+    check("the span normalises inside the cell, in order",
+          0.0 <= span[0] < span[1] <= 1.0, "%.4f..%.4f" % span)
+    check("and points at the quarter of the file the key actually holds",
+          abs(span[0] - 0.25) < 1e-6 and abs(span[1] - 0.5) < 1e-6,
+          "%.4f..%.4f" % span)
+
+
+def t_an_unassigned_key_has_no_span_to_draw():
+    """An empty key shows the plain hairline, so it must report frames 0 and
+    not a stale region left over from whatever it held before."""
+    e = engine()
+    load(e, 0, tone(300.0), "a.wav")
+    e.post("pad.take", i=5, track=0, ls=100, le=9000)
+    e.render_offline(256)
+    check("a loaded key has something to draw", e.pads[5].snapshot(5)["frames"] > 0)
+    e.post("pad.clear", i=5)
+    e.render_offline(256)
+    snap = e.pads[5].snapshot(5)
+    check("a cleared key reports nothing to draw",
+          snap["frames"] == 0 and snap["ls"] == 0 and snap["le"] == 0
+          and snap["loaded"] is False, str(snap)[:60])
+    check("and stops naming a file it no longer holds",
+          snap["name"] == "", repr(snap["name"]))
+
+
 if __name__ == "__main__":
     for fn in (t_a_key_keeps_its_audio_across_a_track_change,
                t_the_snapshot_is_not_a_live_link,
@@ -228,7 +282,9 @@ if __name__ == "__main__":
                t_buffers_are_shared_not_copied,
                t_memory_has_a_stated_ceiling,
                t_clearing_a_key_releases_its_hold,
-               t_key_state_serialises):
+               t_key_state_serialises,
+               t_a_key_reports_the_four_numbers_its_rule_is_drawn_from,
+               t_an_unassigned_key_has_no_span_to_draw):
         try:
             fn()
         except Exception as exc:
