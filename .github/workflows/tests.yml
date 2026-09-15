@@ -1,0 +1,39 @@
+# Every check on every push. No sound card and no display: the engine runs
+# through its offline path, and the one check that needs a file-dialog program
+# prints SKIP with its reason, which `python -m tests` lists by name at the end.
+name: tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  suite:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # The Python the suite is run on locally.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.3"
+          cache: pip
+
+      # test_zoom runs the panel's own view.js under node.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install the pinned dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Run every check
+        run: python -m tests

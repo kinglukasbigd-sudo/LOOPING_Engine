@@ -51,7 +51,16 @@ def t_backend_reports_a_reason_when_headless():
 
 
 def t_backend_found_here():
+    """On a desktop, no dialog program is a real fault and fails. On a machine
+    with no display at all — CI — there is nothing a dialog could open on, so
+    the check is reported as a SKIP, by name and with the reason, which the
+    suite's summary lists: it can never pass silently or vanish."""
     name, reason = picker.backend()
+    headless = not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+    if name is None and headless:
+        print("%-52s SKIP  no display to open a dialog on: %s"
+              % ("a backend is available on this machine", reason[:48]))
+        return
     check("a backend is available on this machine", name is not None,
           name or reason[:40])
 
@@ -63,11 +72,18 @@ def t_cancel_is_not_an_error(monkey_rc=1):
 
     def fake(cmd, **kw):
         return types.SimpleNamespace(returncode=monkey_rc, stdout="", stderr="")
+    # The check is about what an exit code of 1 means, not about this machine
+    # having a desktop. Faking only subprocess.run left it depending on one:
+    # with no display, pick() stopped at backend() and never reached the fake,
+    # so on a headless runner it failed for a reason it was not testing.
+    real_backend = picker.backend
+    picker.backend = lambda: ("zenity", "")
     subprocess.run = fake
     try:
         paths, cancelled, err = picker.pick()
     finally:
         subprocess.run = real
+        picker.backend = real_backend
     check("cancel returns cancelled with no error",
           paths == [] and cancelled is True and err == "",
           "paths=%r cancelled=%r err=%r" % (paths, cancelled, err))

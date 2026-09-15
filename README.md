@@ -157,6 +157,11 @@ those checks fail rather than pass untested.
 
 A single file still runs alone, for example `python3 -m tests.test_freeze`.
 
+CI runs the same command on every push: GitHub Actions, ubuntu-24.04,
+Python 3.12.3, node 22, the pinned requirements, no display and no sound
+card. There the one check that needs a desktop — whether a file-dialog
+program exists — prints SKIP with its reason, and the summary names it.
+
 ```bash
 python -m loopengine.offline kits/testkit-124 render.wav 8
 ```
