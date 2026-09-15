@@ -185,6 +185,23 @@ body.helping [data-help] { opacity: 1; }
 
 .pending-line { font-size: var(--t1); line-height: var(--lh1); margin-top: var(--s2); opacity: var(--dim2); }
 .pending-line.armed { opacity: 1; color: var(--accent); }  /* ACCENT 2 — queued */
+/* The take. Its state and its length each sit in a box sized for their longest
+   reading, so ARMED becoming REC, or 09:59 becoming 10:00, moves nothing. */
+.rec-row { display: flex; align-items: baseline; gap: var(--s3); margin-top: var(--s2); }
+.rec-state {
+  width: var(--w-recstate); flex: none;
+  font-family: var(--font-display); font-size: var(--t1); line-height: var(--lh1);
+  letter-spacing: var(--tr-legend); text-transform: uppercase; opacity: var(--dim2);
+}
+.rec-state.armed { opacity: 1; color: var(--accent); }  /* ACCENT 2 — queued: it starts with RUN */
+.rec-state.on { opacity: 1; }                           /* recording is ink: the pressed REC says it */
+.rec-time {
+  width: var(--w-rectime); flex: none; margin-left: auto; text-align: right;
+  font-size: var(--t3); line-height: var(--lh3);
+  font-variant-numeric: tabular-nums; opacity: var(--dim2);
+}
+.rec-time.on { opacity: 1; }
+#rec-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* A session name can be any length. One line, always, so a long name can never
    push the master meter down the rail. */
 #session-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

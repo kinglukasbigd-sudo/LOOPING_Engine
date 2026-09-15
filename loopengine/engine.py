@@ -279,6 +279,7 @@ class Engine:
         self._t_start = None
         self._cap_buf = None      # diagnostics: see capture()
         self._cap_w = 0
+        self.recorder = None      # the master recording: see recorder.py
         self.last_error = ""
         self.stream = None
 
@@ -399,6 +400,11 @@ class Engine:
             if w + frames <= cb.shape[0]:
                 cb[w:w + frames] = outdata[:frames]
                 self._cap_w = w + frames
+
+        # the master recording, if there is one: a copy into its ring, no more
+        rec = self.recorder
+        if rec is not None:
+            rec.feed(outdata[:frames])
 
         # scope ring
         take = min(frames, SCOPE_N)
@@ -702,6 +708,8 @@ class Engine:
             self.master_gain = max(0.0, min(1.2, float(kw["v"])))
         elif op == "transport.start":
             tr.playing = True
+            if self.recorder is not None:
+                self.recorder.begin(self.xruns)     # an armed take starts with the clock
         elif op == "transport.stop":
             tr.playing = False
             self._cancel_launches()
@@ -711,6 +719,8 @@ class Engine:
             if not tr.playing:
                 self._cancel_launches()
                 self._stop_sound()
+            elif self.recorder is not None:
+                self.recorder.begin(self.xruns)
         elif op == "transport.rewind":
             tr.pos = 0
             for t in self.tracks:

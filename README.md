@@ -147,6 +147,42 @@ error names the keys holding files no track in the session shows. Audio that
 only ever existed in memory has no file to point at; saving names it rather than
 dropping it quietly.
 
+## Recording
+
+REC, in the rail, records the master output — what the device is handed, after
+the master level and the soft clip. With the clock stopped it arms, and the take
+starts on the block RUN starts the clock; with the clock running it starts at
+once. REC again ends it and writes the file. The rail shows the state (OFF,
+ARMED, REC, SAVING) and the take's length, each in a box of its own, and the
+length is always eight characters — `00:00:00` — so nothing beside it moves as
+it counts. While a take runs on a disk with less than half an hour left, the
+line under it says how much.
+
+Takes are 24-bit WAV at the engine's own rate, never resampled, named for the
+second they were armed, in `~/.loopengine/recordings/` (`--recordings DIR` for
+another folder). A take never writes over a file that is already there, and the
+inspector names the file when a take ends.
+
+The audio thread never touches the disk. The callback copies each block into a
+ring allocated once, as the scope does, and a writer thread drains the ring into
+the file. The ring holds 30 seconds, so the disk can stall that long without
+costing a frame. If it stalls for longer, what could not be kept is written as
+silence of the same length, so the take keeps its length, and the inspector says
+how much fell out and where. A disk that fills stops the take and names the file
+holding everything up to that point.
+
+24-bit rather than float, because the output is already clipped at ±1, so float
+would keep nothing anyone heard; and because WAV cannot pass 4 GiB, which at
+48 kHz is 3 h 51 min of 24-bit stereo against 2 h 53 min of float. A take that
+runs past it carries on in `-part2.wav`, sample-continuous with the first. The
+header is brought up to date every two seconds, so a crash leaves a file that
+opens, with all but the last moments in it.
+
+A take is the stream the engine rendered, not a tap on the speaker. An xrun is a
+block the device had to play without: the room hears the gap, and the file does
+not have it. So the inspector also counts the xruns that happened while a take
+ran — the one thing the file cannot tell you afterwards.
+
 ## Layout
 
 ```
@@ -157,6 +193,7 @@ loopengine/
   transport.py   sample-counted clock and quantiser
   engine.py      the callback, the command queue, telemetry
   session.py     sets saved and put back; files and grants re-validated
+  recorder.py    the master recording: a ring the callback fills, a thread writes WAV
   loader.py      decode (libsndfile, then ffmpeg) + analysis off-thread
   server.py      stdlib HTTP + a hand-rolled WebSocket, no framework
   app.py         wiring and the command router
@@ -172,6 +209,7 @@ loopengine/
 | audio   | drains commands, renders, writes telemetry  | never     |
 | control | appends commands from the WebSocket         | yes       |
 | loader  | decode + analyse, hands over finished arrays| yes       |
+| writer  | drains a take's ring into its WAV file      | yes       |
 
 `deque.append` / `popleft` are atomic under CPython, so the command path takes
 no lock. The callback preallocates its scratch and gathers through `np.take(…,
@@ -185,7 +223,7 @@ PYTHONPATH=.pylibs python3 -m tests     # with the vendored dependencies
 python3 -m tests                        # with installed ones
 ```
 
-295 checks in 13 files, about 15 seconds on the machine they were written on.
+331 checks in 14 files, about 25 seconds on the machine they were written on.
 Each file runs in its own process and prints PASS, FAIL or SKIP for every check,
 and the summary names every SKIP, so a skipped check cannot quietly become a
 permanent one. No sound card is needed — everything runs through the offline
@@ -402,7 +440,7 @@ that reason. The captures are the honest artefact; a person has to play them.
 
 ## Traps
 
-Ten things that looked like they worked. Each cost real time, and each
+Thirteen things that looked like they worked. Each cost real time, and each
 produces a confident wrong answer rather than an error, which is why they are
 written down rather than left in a commit message.
 
@@ -504,6 +542,30 @@ code and the old fail a test identically, suspect the test.*
 matches nothing and exits quietly, which produced a confident "pipewire is not
 running" that was wrong and propagated into a later work order. pipewire was
 running the whole time and was the thing inserting the resampler.
+
+**A save that forgot what it could not load.** A session whose file had moved
+loaded as it should — the track empty, named, the reason in the inspector — and
+the next SAVE wrote only what was on deck. The newer file had no track 6 at all:
+saved with a drive unplugged, the set would have lost that track for good, and
+opening it later would have shown nothing missing. Found on the live panel, in
+the second session file, not by a test. *A reference that could not be resolved
+is still part of the set: carry it until someone replaces it. And carry a grant
+only if it checked out, or a save becomes a way to sign a hand-edited path.*
+
+**`overflow: hidden` takes a flex item's minimum height to nought.** The
+inspector's bar clips its title, and in a flex column that makes its automatic
+minimum height zero. Nothing showed until a three-line note overfilled the
+column at 1366×768: the 20 px bar gave up 1.7 px, sprang back when the note
+cleared, and moved 96 elements each way. *Fixed chrome in a flex column is
+`flex: none`, and anything that appears on demand gets a reserved box. Probe
+with the longest message, not the empty state.*
+
+**A background tab pauses the panel.** The panel paints on
+`requestAnimationFrame`, which a hidden tab does not run. SAVE sat on "saving…"
+while the server had already written the file; the file on disk, not the page,
+was the evidence. *When the panel looks stuck, check what the server did before
+believing the page — and a test that cannot show its tab has to call the render
+pass itself.*
 
 ## The audio graph underneath
 

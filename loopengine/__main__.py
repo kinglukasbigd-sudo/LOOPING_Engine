@@ -26,6 +26,8 @@ def main(argv=None):
     ap.add_argument("--sessions", default=None,
                     help="folder sessions are saved to and opened from "
                          "(default ~/.loopengine/sessions)")
+    ap.add_argument("--recordings", default=None,
+                    help="folder REC writes takes to (default ~/.loopengine/recordings)")
     ap.add_argument("--root", action="append", default=None,
                     help="folder the file browser may read (repeatable)")
     ap.add_argument("--empty", action="store_true",
@@ -95,6 +97,7 @@ def main(argv=None):
 
     roots = args.root or [HERE, os.path.expanduser("~")]
     app = App(engine, roots=roots, sessions_dir=args.sessions,
+              recordings_dir=args.recordings,
               inbox=os.path.join(HERE, ".inbox")).start_pump()
 
     try:
@@ -173,6 +176,12 @@ def main(argv=None):
     except KeyboardInterrupt:
         print()
     finally:
+        rec = engine.recorder
+        if rec is not None and rec.state != "idle":
+            rec.request_stop()          # while the stream runs, so the callback names the end
+            s = rec.finish(timeout=30)
+            if s and s["frames"]:
+                print("  recorded   %s (%.1f s)" % (s["path"], s["seconds"]))
         engine.stop()
         server.shutdown()
     return 0

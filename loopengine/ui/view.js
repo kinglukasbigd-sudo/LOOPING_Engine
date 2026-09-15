@@ -261,10 +261,20 @@
     return api;
   }
 
+  /* A take's length, hh:mm:ss: always eight characters, so no digit moves as
+     it grows. Whole seconds; past 99 hours it holds at 99:59:59. */
+  function clock(seconds) {
+    const v = Number(seconds);
+    const s = Number.isFinite(v) ? Math.max(0, Math.min(359999, Math.floor(v))) : 0;
+    const two = (n) => (n < 10 ? '0' : '') + n;
+    return two(Math.floor(s / 3600)) + ':' + two(Math.floor(s / 60) % 60) + ':' + two(s % 60);
+  }
+
   const View = {
     PX_PER_SAMPLE_MAX, minSpan, whole, isWhole, clamp, zoomAt, pan, fitLoop,
     xToFrame, frameToX, nudgeStep, envelopeSource, samplesSource,
     overviewSource, bucketSize, bucketOf, columns, sampleLine, store, coalescer,
+    clock,
   };
   if (typeof module === 'object' && module.exports) module.exports = View;
   else root.View = View;

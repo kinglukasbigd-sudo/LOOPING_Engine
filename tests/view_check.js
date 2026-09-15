@@ -243,4 +243,19 @@ const MIN4 = 48000 * 240;           // the brief's four-minute file: 11,520,000 
         Object.keys(c.entries()).join() === 'track:5', Object.keys(c.entries()).join());
 }
 
+// ── a take's clock ───────────────────────────────────────────────────────
+{
+  const lengths = new Set();
+  for (const s of [0, 0.4, 59.99, 60, 599, 3599.9, 3600, 36000, 359999, 400000, -5, NaN, 'x', undefined])
+    lengths.add(V.clock(s).length);
+  check('the take clock is always eight characters, so no digit moves as it grows',
+        lengths.size === 1 && lengths.has(8), [...lengths].join());
+  check('it reads hours, minutes and whole seconds',
+        V.clock(0) === '00:00:00' && V.clock(59.99) === '00:00:59' && V.clock(3661) === '01:01:01',
+        V.clock(3661));
+  check('past 99 hours it holds at 99:59:59 rather than grow a digit', V.clock(400000) === '99:59:59');
+  check('a missing or broken reading shows nought, never NaN',
+        V.clock(NaN) === '00:00:00' && V.clock(undefined) === '00:00:00' && V.clock(-5) === '00:00:00');
+}
+
 process.exitCode = fails ? 1 : 0;

@@ -68,6 +68,7 @@ const HELP = {
   q:       ['WAITING',           'Shows what this track is waiting to do at the next boundary.'],
   pads:    ['KEYS',              'Each key holds its own sound and loop, and keeps them when you change the track.'],
   session: ['SESSION',           'SAVE writes every track, key, region and zoom to a file. OPEN puts a set back.'],
+  record:  ['RECORD',            'REC arms a take of the master output. RUN starts it, or it starts at once if the clock runs. REC again writes the file.'],
 };
 
 /* Reserved, not derived: the inspector holds this many rows whether it is
@@ -176,6 +177,7 @@ paints its own result locally instead of waiting for the engine to answer.`);
       if (msg.op === 'picked') { onPicked(msg); return; }
       if (msg.op === 'session.saved') { onSessionSaved(msg); return; }
       if (msg.op === 'session.loaded') { onSessionLoaded(msg); return; }
+      if (msg.op === 'record.done') { onRecordDone(msg); return; }
       S = msg;
       if (S.probe_id === probe.id && probe.sentAt) {
         // A probe is answered by the next telemetry frame, so one reading
@@ -625,6 +627,60 @@ function onSessionLoaded(msg) {
     : '';
 }
 
+/* ── the take ────────────────────────────────────────────────────────── */
+/* REC arms a take of the master output; RUN starts it, or it starts at once if
+   the clock is running. The state word and the clock each have a reserved box,
+   and the clock is always eight characters, so nothing beside them moves. */
+const REC_WORD = { idle: 'OFF', armed: 'ARMED', recording: 'REC', stopping: 'SAVING' };
+function recLine(state, take) {
+  if (state === 'armed') return 'armed — starts with RUN';
+  if (state === 'recording') {
+    if (!take || !take.name) return 'recording';
+    const low = take.free_s != null && take.free_s < 1800
+      ? ' — ' + Math.floor(take.free_s / 60) + ' min of disk left' : '';
+    return take.name + (take.parts > 1 ? ' — part ' + take.parts : '') + low;
+  }
+  if (state === 'stopping') return 'writing the file…';
+  if (take && take.error) return 'not recording — the reason is in the inspector';
+  if (take && take.last) return 'saved ' + take.last.name;
+  return 'nothing recorded yet';
+}
+function paintRec(state, take) {
+  $('#rec-btn').setAttribute('aria-pressed', state === 'recording');
+  const word = $('#rec-state');
+  setText(word, REC_WORD[state] || 'OFF');
+  word.classList.toggle('armed', state === 'armed');
+  word.classList.toggle('on', state === 'recording');
+  /* The engine's own count, except while a press is ahead of it: a take the
+     panel predicts has started reads nought, not the length of the one before. */
+  const engineSays = take ? take.state : 'idle';
+  const ahead = state === 'recording' && engineSays !== 'recording' && engineSays !== 'stopping';
+  const secs = !take || state === 'armed' || ahead ? 0 : take.elapsed_s;
+  const clock = $('#rec-time');
+  setText(clock, View.clock(secs));
+  clock.classList.toggle('on', state === 'recording');
+  setText($('#rec-line'), recLine(state, take));
+}
+function onRecordDone(msg) {
+  OPT.delete('recState');
+  if (msg.disarmed) return;
+  /* the next telemetry frame carries the same; say it now, not a frame late */
+  if (S && S.record && msg.path) {
+    S.record.last = { name: msg.path.split('/').pop(), seconds: msg.seconds,
+                      dropped: msg.dropped, error: msg.error };
+  }
+  if (msg.error) { localError = msg.error; return; }
+  const names = (msg.files || []).map((p) => p.split('/').pop());
+  const where = names.length > 1 ? names.length + ' files: ' + names.join(', ') : names[0];
+  const lost = msg.dropped && msg.gaps && msg.gaps.length
+    ? ` The disk fell behind: ${(msg.dropped / msg.sr).toFixed(2)} s of it is silence,`
+      + ` first at ${View.clock(msg.gaps[0][0] / msg.sr)}.` : '';
+  const xr = msg.xruns
+    ? ` ${msg.xruns} xrun${msg.xruns > 1 ? 's' : ''} while it ran: the room may have heard a dropout the file does not have.`
+    : '';
+  localError = `Recorded ${View.clock(msg.seconds)} in ${msg.dir} — ${where}.${lost}${xr}`;
+}
+
 function onPicked(msg) {
   clearTimeout(openPicker._t);
   awaitingPick = null;
@@ -742,6 +798,8 @@ function renderState() {
     : 'nothing queued');
   pend.classList.toggle('armed', depth > 0);
   setText($('#session-line'), settled('sessionLine', sessionText(S.session)));
+  const take = S.record || null;
+  paintRec(settled('recState', take ? take.state : 'idle'), take);
   setText($('#master-db'), dB(S.master));
   if (document.activeElement !== $('#master')) $('#master').value = S.master;
 
@@ -1442,6 +1500,16 @@ const ACT = {
     send({ op: 'session.save', views: views.entries() });
   },
   open:    () => openSessions(),
+  rec:     () => {
+    const take = S && S.record;
+    const now = settled('recState', take ? take.state : 'idle');
+    const next = now === 'idle' ? (settled('transport', !!(S && S.playing)) ? 'recording' : 'armed')
+               : now === 'recording' ? 'stopping'
+               : now === 'armed' ? 'idle' : now;
+    predict('recState', next, 3000);
+    paintRec(next, take);                                   // paint first
+    send({ op: 'record' });
+  },
   pick:    () => openPicker(true),
   unload:  () => send({ op: 'unload', i: focus }),
   mappads: () => send({ op: 'pads.map', track: focus, mode: padMode }),

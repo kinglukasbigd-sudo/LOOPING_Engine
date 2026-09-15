@@ -13,6 +13,8 @@ import numpy as np
 from . import picker
 from . import session
 from .loader import AUDIO_EXT, DecodeError, Loader, decode
+from .recorder import (ARMED as REC_ARMED, IDLE as REC_IDLE,
+                       RECORDING as REC_RECORDING, Recorder, part_path)
 from .server import (Hub, new_token, OP_BIN, BIN_SCOPE, BIN_PEAKS,
                      BIN_PEAKS_PAD, BIN_PEAKS_RANGE)
 from . import dsp
@@ -28,7 +30,7 @@ KEY_MODES = (ONESHOT, GATE, LOOP)
 
 class App:
     def __init__(self, engine, roots=None, inbox=".inbox", fps=30,
-                 sessions_dir=None, session_key=None):
+                 sessions_dir=None, session_key=None, recordings_dir=None):
         self.engine = engine
         self.token = new_token()
         self.hub = Hub()
@@ -56,6 +58,10 @@ class App:
         # The saved rows behind the missing marks. A save made while a file is
         # away writes them back, so the reference does not leave with the drive.
         self._kept = {}
+        self.recordings_dir = os.path.realpath(os.path.expanduser(
+            recordings_dir or os.path.join(home, "recordings")))
+        self.record_last = None      # the last finished take, for a panel opened later
+        self.record_error = ""
         self._stop = threading.Event()
 
     # -- telemetry ---------------------------------------------------------
@@ -69,6 +75,7 @@ class App:
                 snap["op"] = "state"
                 snap["meta"] = self.meta
                 snap["session"] = self.session
+                snap["record"] = self.record_state()
                 self.hub.text(snap)
                 sc = self.engine.scope(512)
                 self.hub.broadcast(
@@ -235,6 +242,8 @@ class App:
             return self._session_save(msg)
         if op == "session.load":
             return self._session_load_async(msg)
+        if op == "record":
+            return self.record_toggle()
         if op == "load":
             i, path = int(msg["i"]), msg["path"]
             if not self._inside_roots(path):
@@ -741,6 +750,65 @@ class App:
             self.meta.setdefault(i, {}).update(
                 bpm=bpm, conf=conf, slices=pts.tolist(), slice_method=method,
                 stage="analysed")
+
+    # -- recording -------------------------------------------------------------
+    def record_state(self):
+        """The take, for telemetry: its state, length and file, and the last one."""
+        r = self.engine.recorder
+        out = r.report() if r is not None else {
+            "state": REC_IDLE, "elapsed_s": 0.0, "name": "", "parts": 0,
+            "dropped": 0, "lag_ms": 0.0, "error": "", "free_s": None}
+        out["error"] = out["error"] or self.record_error
+        out["last"] = self.record_last
+        return out
+
+    def record_toggle(self):
+        """REC. Idle: arm a take, which starts with the clock, or at once if the
+        clock is already running. Armed or recording: end it. The file is
+        opened here and written by the recorder's own thread; the audio thread
+        only ever copies into its ring."""
+        e = self.engine
+        r = e.recorder
+        if r is None:
+            r = e.recorder = Recorder(e.sr, on_end=self._take_ended)
+        if r.state == REC_IDLE:
+            self.record_error = ""
+            try:
+                r.arm(self._take_path())
+            except Exception as x:
+                self.record_error = ("Not recording — nothing could be written in %s: %s."
+                                     % (self.recordings_dir,
+                                        getattr(x, "strerror", None) or x))
+                # the rail points at the inspector, so the reason has to reach it
+                self.hub.text({"op": "record.done", "disarmed": False, "files": [],
+                               "error": self.record_error})
+                return
+            if e.transport.playing:
+                r.begin(e.xruns)
+        elif r.state in (REC_ARMED, REC_RECORDING):
+            r.request_stop()
+
+    def _take_path(self):
+        os.makedirs(self.recordings_dir, exist_ok=True)
+        stem = os.path.join(self.recordings_dir, time.strftime("rec-%Y%m%d-%H%M%S"))
+        k = 1
+        while True:
+            p = stem + ("" if k == 1 else "-%d" % k) + ".wav"
+            if not os.path.exists(p) and not os.path.exists(part_path(p, 2)):
+                return p
+            k += 1
+
+    def _take_ended(self, s):
+        """On the recorder's writer thread, once the file is closed."""
+        if s["frames"] == 0 and not s["error"]:
+            self.hub.text({"op": "record.done", "disarmed": True})
+            return
+        r = self.engine.recorder
+        xr = max(0, self.engine.xruns - (r.xruns_at_begin if r is not None else 0))
+        self.record_last = {"name": os.path.basename(s["path"]), "seconds": s["seconds"],
+                            "dropped": s["dropped"], "error": s["error"]}
+        self.hub.text(dict(s, op="record.done", disarmed=False, xruns=xr,
+                           sr=self.engine.sr, dir=self.recordings_dir))
 
     # -- convenience -------------------------------------------------------
     def load_kit(self, d):
