@@ -708,7 +708,8 @@ function renderState() {
     const el = $$('#strips .strip')[i];
     if (!el) return;
     el.classList.toggle('empty-row', !t.loaded);
-    el.classList.toggle('playing', t.playing);
+    const playing = settled(`${i}.playing`, t.playing);
+    el.classList.toggle('playing', playing);
     setText(el.querySelector('.c-name'),
             i === awaitingPick ? 'waiting for the file dialog'
                                : (t.loaded ? t.name : 'empty'));
@@ -727,7 +728,7 @@ function renderState() {
     el.querySelector('[data-t="rev"]').setAttribute('aria-pressed', t.rev);
     const q = el.querySelector('.c-q');
     const queued = depth === 0 ? null : settled(`${i}.queued`, t.queued);
-    setText(q, queued ? queued.slice(0, 3) : (t.playing ? '▮' : ''));
+    setText(q, queued ? queued.slice(0, 3) : (playing ? '▮' : ''));
     q.classList.toggle('armed', !!queued);
     if (lastFired[i] !== undefined && t.fired !== lastFired[i]) {
       el.classList.remove('fired');
@@ -742,12 +743,13 @@ function renderState() {
     paintMinimap(el.querySelector('.c-wave'), i, t);
   });
 
+  const keysSounding = settled('padsOn', S.pads_on.some(Boolean));
   S.pads.forEach((p, i) => {
     const el = $$('#padgrid .pad')[i];
     if (!el) return;
     const mapped = p.loaded;
     el.classList.toggle('unmapped', !mapped);
-    el.classList.toggle('on', !!S.pads_on[i]);
+    el.classList.toggle('on', keysSounding && !!S.pads_on[i]);
     el.classList.toggle('armed',
       depth !== 0 && !!(S.pads_pending && S.pads_pending[i]));
     /* The file this key holds, not where it came from. A key keeps its
@@ -1364,6 +1366,13 @@ const ACT = {
        before the stop. Predicting is the only thing that outlives it, and
        this is a fact about the engine's rule, not a guess. */
     if (!v) predict('pending', 0);
+    /* SPACE stops the sound now, not just the clock, so the rows and keys
+       stop claiming to play on the same frame — the fades are 6 ms and 4 ms,
+       well inside the half-second window these predictions hold for. */
+    if (!v && S) {
+      S.tracks.forEach((_, i) => predict(`${i}.playing`, false));
+      predict('padsOn', false);
+    }
     send({ op: 'transport.toggle' });
   },
   rtz:     () => send({ op: 'transport.rewind' }),
@@ -1455,7 +1464,11 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   switch (code) {
-    case 'Space': e.preventDefault(); send({ op: 'transport.toggle' }); break;
+    /* Through ACT.run, not straight to the socket: the key used to skip the
+       paint-first path the RUN button had, so the most important key on the
+       panel was the one control whose press drew nothing until the engine
+       answered. */
+    case 'Space': e.preventDefault(); ACT.run(); break;
     case 'Digit5': send({ op: 'track.loop.scale', i: focus, v: 0.5 }); break;
     case 'Digit6': send({ op: 'track.loop.scale', i: focus, v: 2.0 }); break;
     case 'Digit7': send({ op: 'track.loop.nudge', i: focus, v: -1 }); break;

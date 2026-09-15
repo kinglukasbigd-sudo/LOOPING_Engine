@@ -11,9 +11,10 @@ ONESHOT, GATE, LOOP = "ONE", "GATE", "LOOP"
 class Voice:
     __slots__ = ("blocksize", "active", "pad", "buf", "sr", "start", "end",
                  "phase", "step", "gain", "gl", "gr", "mode", "held",
-                 "rel_env", "rel_step", "_w", "age")
+                 "rel_env", "rel_step", "_w", "age", "stopping")
 
     def __init__(self, blocksize: int):
+        self.stopping = False
         self.blocksize = blocksize
         self.active = False
         self.pad = -1
@@ -45,6 +46,7 @@ class Voice:
         self.gl, self.gr = dsp.pan_gains(pan)
         self.mode = mode
         self.held = True
+        self.stopping = False
         self.rel_env = 1.0
         # 4 ms release. Long enough to kill the click, short enough to feel hard.
         self.rel_step = 1.0 / max(1.0, 0.004 * engine_sr)
@@ -56,6 +58,12 @@ class Voice:
 
     def release(self):
         self.held = False
+
+    def fade_out(self):
+        """Stop through the release ramp whatever the mode. A one-shot normally
+        ignores release and plays to its end; a transport stop means now."""
+        self.held = False
+        self.stopping = True
 
     def render(self, out: np.ndarray, n: int, engine_sr: int):
         if not self.active:
@@ -83,7 +91,7 @@ class Voice:
             self.phase = end_phase
 
         env = 1.0
-        if not self.held and self.mode in (GATE, LOOP):
+        if not self.held and (self.mode in (GATE, LOOP) or self.stopping):
             e0 = self.rel_env
             self.rel_env = max(0.0, e0 - self.rel_step * n)
             ramp = w.k[:n] * (1.0 / n)
@@ -125,6 +133,11 @@ class VoicePool:
         for v in self.voices:
             if v.active and v.pad == pad:
                 v.release()
+
+    def fade_all(self):
+        for v in self.voices:
+            if v.active:
+                v.fade_out()
 
     def panic(self):
         for v in self.voices:

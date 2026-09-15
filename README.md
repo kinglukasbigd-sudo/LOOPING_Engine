@@ -79,7 +79,7 @@ once a device is there — you just can't hear it.
                                       9 / 0   fit loop / whole file
                                       - / =   zoom out / in
                                       TAB L   next track / load
-                                      ESC     panic, everything stops
+                                      ESC     panic, cut everything now
 ```
 
 SHIFT is the FUNC key: hold it and the pad grid becomes the track grid. Double
@@ -147,7 +147,7 @@ PYTHONPATH=.pylibs python3 -m tests     # with the vendored dependencies
 python3 -m tests                        # with installed ones
 ```
 
-231 checks in 10 files, about 21 seconds on the machine they were written on.
+252 checks in 11 files, about 16 seconds on the machine they were written on.
 Each file runs in its own process and prints PASS, FAIL or SKIP for every check,
 and the summary names every SKIP, so a skipped check cannot quietly become a
 permanent one. No sound card is needed — everything runs through the offline

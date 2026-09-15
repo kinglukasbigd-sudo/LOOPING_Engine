@@ -13,6 +13,10 @@ MODES = ["STEREO", "CTR", "SIDE"]
 MIN_LOOP = 64
 
 
+# A stop halts once the smoothed gain is below this: -80 dB.
+STOP_FLOOR = 1e-4
+
+
 class Track:
     """State + render. All positions are in *source* samples, float64 phase.
 
@@ -26,7 +30,7 @@ class Track:
         "src", "variants", "mode", "loop_start", "loop_end", "phase",
         "playing", "reverse", "mute", "solo", "gain", "pan", "speed",
         "xfade", "slices", "bpm", "bpm_conf", "peak", "rms", "_g", "_gl",
-        "_gr", "_w", "fired", "queued", "analysing",
+        "_gr", "_w", "fired", "queued", "analysing", "stopping",
     )
 
     def __init__(self, index: int, blocksize: int):
@@ -57,6 +61,7 @@ class Track:
         self.peak = 0.0
         self.rms = 0.0
         self._g = 0.0              # smoothed gain, avoids zipper noise
+        self.stopping = False      # fading to silence; halts when the fade lands
         self._gl, self._gr = dsp.pan_gains(0.0)
         self._w = None
         self.fired = 0             # bumped when a queued change lands
@@ -69,6 +74,7 @@ class Track:
              analysing: bool = False):
         self.src = buf
         self.variants = {"STEREO": buf}
+        self.stopping = False
         self.mode = "STEREO"
         self.sr = sr
         self.frames = buf.shape[0]
@@ -89,6 +95,7 @@ class Track:
         self.playing = False
         self.src = None
         self.variants = {}
+        self.stopping = False
         self.name = ""
         self.path = ""
         self.frames = 0
@@ -106,7 +113,8 @@ class Track:
 
     # -- render ------------------------------------------------------------
     def render(self, out: np.ndarray, n: int, engine_sr: int, any_solo: bool):
-        target = 0.0 if (self.mute or (any_solo and not self.solo)) else self.gain
+        target = 0.0 if (self.stopping or self.mute or (any_solo and not self.solo)) \
+            else self.gain
         buf = self.buf
         if buf is None or not self.playing:
             # keep the smoother running so an unmute mid-fade still lands clean
@@ -117,6 +125,8 @@ class Track:
 
         L = self.loop_len
         if L < MIN_LOOP:
+            if self.stopping:                # nothing to fade: just halt
+                self.playing = self.stopping = False
             return
 
         step = self.speed * (self.sr / float(engine_sr))
@@ -149,6 +159,14 @@ class Track:
 
         self.phase = self.loop_start + (
             (self.phase - self.loop_start + step * n) % L)
+
+        # A stop is a fade, not a cut. Setting playing False mid-waveform stepped
+        # the output 26x the largest step in the audio itself — a click on every
+        # stop. So a stopping track keeps rendering toward a gain of zero through
+        # the same smoother mute uses, and halts only once it has landed there.
+        if self.stopping and self._g < STOP_FLOOR:
+            self.playing = self.stopping = False
+            self._g = 0.0
 
     # -- edits -------------------------------------------------------------
     def set_pan(self, pan: float):

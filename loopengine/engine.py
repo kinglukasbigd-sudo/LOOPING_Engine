@@ -408,6 +408,22 @@ class Engine:
                 "track.loop.slice": "LOOP"}.get(op, op)
         self.pending_labels = [o for o, _ in self._pending]
 
+    def _stop_sound(self):
+        """SPACE stops what you hear, not just the clock.
+
+        The label always said "run / stop"; the transport used to stop only
+        the grid while every playing track and key went on sounding until ESC.
+        Now tracks fade through their gain smoother (about 6 ms at 256 frames)
+        and keys through their release ramp (4 ms) — one-shots included — so a
+        stop never clicks. Starting the clock again does not bring them back:
+        what was stopped stays stopped until it is launched. ESC is still the
+        immediate cut.
+        """
+        for t in self.tracks:
+            if t.playing:
+                t.stopping = True
+        self.voices.fade_all()
+
     def _cancel_launches(self):
         """Drop queued moments; keep queued edits.
 
@@ -490,18 +506,22 @@ class Engine:
         elif op == "track.play":
             t = self._t(kw)
             if t and t.src is not None:
-                t.playing = True
+                t.playing, t.stopping = True, False
                 if kw.get("retrig", True):
                     t.phase = float(t.loop_start)
         elif op == "track.stop":
             t = self._t(kw)
-            if t:
-                t.playing = False
+            if t and t.playing:
+                t.stopping = True            # fades, then halts in render()
         elif op == "track.toggle":
             t = self._t(kw)
             if t and t.src is not None:
-                t.playing = not t.playing
-                if t.playing:
+                if t.stopping:               # caught mid-fade: carry on from here —
+                    t.stopping = False       # jumping back to the loop start would click
+                elif t.playing:
+                    t.stopping = True        # fade out, then halt
+                else:
+                    t.playing = True
                     t.phase = float(t.loop_start)
         elif op == "track.retrig":
             t = self._t(kw)
@@ -577,10 +597,12 @@ class Engine:
         elif op == "transport.stop":
             tr.playing = False
             self._cancel_launches()
+            self._stop_sound()
         elif op == "transport.toggle":
             tr.playing = not tr.playing
             if not tr.playing:
                 self._cancel_launches()
+                self._stop_sound()
         elif op == "transport.rewind":
             tr.pos = 0
             for t in self.tracks:
@@ -630,9 +652,11 @@ class Engine:
         elif op == "pad.release":
             self.voices.release_pad(int(kw["i"]))
         elif op == "panic":
+            # ESC: the immediate cut. No fade, by design — it is the control
+            # for when something has to be silent this block, clicks and all.
             self.voices.panic()
             for t in self.tracks:
-                t.playing = False
+                t.playing = t.stopping = False
         elif op == "probe":
             # touched by the audio thread itself, so an id coming back in the
             # next snapshot proves the whole loop, not just the socket
