@@ -471,7 +471,9 @@ and went with the state of the machine, not with the take: 11 and 0 without one,
 16, 20 and 0 with one. The 20 were timed against the loads: every one fell
 within 2.2 s of a file starting to load — clustered at 0.1–0.3 s and 1.7–2.2 s —
 and none in the last 0.8 s of the three-second cycle, where a quarter would land
-by chance. That is the load's decode and analysis on a machine that is paging.
+by chance. That is the load's own decode and analysis. The count swinging from 0
+to 20 with the machine's state, on a machine with swap in use, suggests paging;
+nothing here measured it.
 The thirty-second table under *Traps* records a set at 0 xruns; five minutes at
 a time it is anywhere from 0 to 20.
 
@@ -549,9 +551,9 @@ the collections that land on the audio thread. The same phases afterwards: 0, 0,
 engine or the panel runs a loop like that. Keep it that way.*
 Those phases were thirty seconds long. Five-minute phases of the same set's
 load, measured for the recording in work order 7, gave anywhere from 0 to 20
-xruns, each within two seconds of a file starting to load and none with a
-collection on the audio thread — see *A long take under load*. The finding
-about allocation stands; the zero for a set was a short sample.
+xruns — the 20 that were timed all within 2.2 s of a file starting to load — and
+not one collection on the audio thread; see *A long take under load*. The
+finding about allocation stands; the zero for a set was a short sample.
 
 **A fix that was right for one kind of work and wrong for the other.** "A
 stopped clock has no edges" unstuck a queue that could strand and later revert
