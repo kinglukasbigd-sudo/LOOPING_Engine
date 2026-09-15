@@ -143,12 +143,19 @@ blocksize is 256 rather than 64. If you get xruns, raise `--blocksize`.
 ## Tests
 
 ```bash
-python -m tests.test_engine
+PYTHONPATH=.pylibs python3 -m tests     # with the vendored dependencies
+python3 -m tests                        # with installed ones
 ```
 
-13 checks: seam continuity, crossfade, quantiser accuracy to within the
-anti-click fade, rate conversion, reverse, pad polyphony, the limiter, bpm and
-slice analysis, and finiteness under extreme speed and sub-crossfade loops.
+231 checks in 10 files, about 21 seconds on the machine they were written on.
+Each file runs in its own process and prints PASS, FAIL or SKIP for every check,
+and the summary names every SKIP, so a skipped check cannot quietly become a
+permanent one. No sound card is needed — everything runs through the offline
+engine. `test_zoom` does need `node` on PATH: the panel's zoom arithmetic is
+tested in the browser's own file, `loopengine/ui/view.js`, and without node
+those checks fail rather than pass untested.
+
+A single file still runs alone, for example `python3 -m tests.test_freeze`.
 
 ```bash
 python -m loopengine.offline kits/testkit-124 render.wav 8

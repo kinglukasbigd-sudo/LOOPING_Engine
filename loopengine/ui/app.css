@@ -426,6 +426,14 @@ kbd {
    engine a telemetry tick later and takes over without a visible seam. */
 .pad.hit, .pad.on { background: var(--fg); color: var(--bg); }
 .pad.armed .p-key { color: var(--accent); }        /* ACCENT 2 — queued */
+/* HELD AND QUEUED. The held cell inverts to bone, and accent on bone is 2.3:1 —
+   the queued cap all but vanished on exactly the key you were already
+   touching. So it keeps the look it has on an idle key: accent on the dark
+   ground, as a tile cut out of the held cell. The glyph is back to 5.7:1, and a
+   dark tile on bone is about the strongest contrast on the panel, so the state
+   reads at a glance. No new colour and no new token: a darker accent would be a
+   second accent. The one accent goes back on the ground it was chosen for. */
+.pad.on.armed .p-key, .pad.hit.armed .p-key { background: var(--bg); color: var(--accent); }
 /* The key the waveform panel is editing. Same marker the focused strip uses,
    carried on the pad's own edge — nothing floats. */
 .pad.editing { background: var(--n1); }
@@ -434,6 +442,9 @@ kbd {
 .p-key {
   font-family: var(--font-display); font-weight: 700;
   font-size: var(--t3); line-height: var(--lh3); letter-spacing: var(--tr-legend);
+  /* A box that hugs the cap, padded out and pulled back by the same amount, so
+     the tile above has room around the glyph and the glyph never moves. */
+  justify-self: start; padding: 0 var(--s1); margin-left: calc(-1 * var(--s1));
 }
 .p-label { font-size: var(--t1); line-height: var(--lh1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* ONE / GATE / LOOP / — all in one box: an auto column here resized the key

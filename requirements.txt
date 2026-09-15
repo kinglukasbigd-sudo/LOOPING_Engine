@@ -1,3 +1,12 @@
-numpy>=1.22
-sounddevice>=0.4.6
-soundfile>=0.12.1
+# Pinned to exactly what the suite was last run against, on Python 3.12.3.
+# A vectorised audio engine is where a minor numpy release can change results
+# without an error, so these move deliberately, with the suite — not whenever
+# pip feels like it. cffi, pycparser and typing_extensions are what
+# sounddevice and soundfile pull in; they are pinned too, so a fresh install
+# is the install that was tested.
+numpy==2.5.3
+sounddevice==0.5.6
+soundfile==0.14.0
+cffi==2.1.1
+pycparser==3.0
+typing_extensions==4.16.0
