@@ -147,7 +147,7 @@ PYTHONPATH=.pylibs python3 -m tests     # with the vendored dependencies
 python3 -m tests                        # with installed ones
 ```
 
-252 checks in 11 files, about 16 seconds on the machine they were written on.
+263 checks in 12 files, about 15 seconds on the machine they were written on.
 Each file runs in its own process and prints PASS, FAIL or SKIP for every check,
 and the summary names every SKIP, so a skipped check cannot quietly become a
 permanent one. No sound card is needed — everything runs through the offline
@@ -364,7 +364,7 @@ that reason. The captures are the honest artefact; a person has to play them.
 
 ## Traps
 
-Nine things that looked like they worked. Each cost real time, and each
+Ten things that looked like they worked. Each cost real time, and each
 produces a confident wrong answer rather than an error, which is why they are
 written down rather than left in a commit message.
 
@@ -382,9 +382,8 @@ capture problem below hit this and silently captured nothing. *`capture()` is
 inside the callback now, so ordering cannot break it.*
 
 **The capture produced the underrun it was recording.** Copying each block
-into a growing list allocates ~2 kB per callback on the audio thread. Alone it
-survives; combined with decode work elsewhere it drags a garbage collection
-into the callback:
+into a growing list on the audio thread survived on its own, and so did decode
+work elsewhere. The two together produced xruns:
 
 | condition | xruns | blocks |
 |---|---|---|
@@ -395,6 +394,38 @@ into the callback:
 
 *`capture()` allocates one buffer up front. The same worst case then runs
 clean: 0 over 13051 blocks.*
+
+The explanation first written here — that the list dragged a garbage
+collection into the callback — cannot be right as it stood. numpy arrays are
+not tracked by the collector (`gc.is_tracked(np.zeros(3))` is False), so a list
+of them is one tracked object however long it grows, and appending to it never
+advances the collector's count. The table and the fix stand; the mechanism
+behind those three xruns is not established. What work order 7 did establish
+is the next entry.
+
+**Allocating on the audio thread is not what starves it.** Work order 7 was
+asked to remove the lists the quantised queue built inside the callback, on the
+theory that they were how that dropout happened. Measured on the device before
+changing anything, three muted four-minute tracks playing, 30 s a phase:
+
+| load on another thread | xruns | blocks run | on the audio thread |
+|---|---|---|---|
+| none | 0 | 6000 | no collections |
+| a loop drag at 120 Hz against a BAR quantum | 0 | 6000 | no collections |
+| decoding a 44 MB file, back to back | 0 | 6016 | no collections |
+| a set: a four-minute file loading every 3 s, telemetry at 30 Hz, the drag | 0 | 6000 | no collections |
+| a tight pure-Python loop building containers | **367** | **909** | 7, one of them 10.36 ms |
+
+The queue's lists never set a collection off: they come from CPython's free
+lists and die in the block that made them, and a collection is triggered by net
+growth in tracked objects, not by how many are made. What starves the callback
+is another thread holding the interpreter lock — a CPU-bound Python loop, and
+the full collections it sets off, 8–11 ms each wherever they run. A shorter GIL
+switch interval made it worse: 903 xruns. The queue is preallocated anyway, so
+the callback builds no container by construction, and every snapshot now counts
+the collections that land on the audio thread. The same phases afterwards: 0, 0,
+0, 0 — and 382 for the loop that no queue change can reach. *Nothing in the
+engine or the panel runs a loop like that. Keep it that way.*
 
 **A fix that was right for one kind of work and wrong for the other.** "A
 stopped clock has no edges" unstuck a queue that could strand and later revert

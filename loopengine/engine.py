@@ -12,8 +12,10 @@ Threading contract
 from __future__ import annotations
 
 import collections
+import gc
 import threading
 import time
+import weakref
 
 import numpy as np
 
@@ -54,6 +56,38 @@ QUANTIZED = {
 LAUNCH = {
     "track.play", "track.stop", "track.toggle", "track.retrig", "pad.trigger.q",
 }
+
+# The quantised queue holds at most one entry per (op, index) — collapse sees
+# to that. Nine track ops over eight tracks and one key op over sixteen keys is
+# 88, so this never fills; if it ever did, the command applies at once and is
+# counted rather than dropped.
+QUEUE_CAP = 256
+
+QUEUED_LABEL = {
+    "track.play": "START", "track.stop": "STOP", "track.toggle": "TOGGLE",
+    "track.rev": "REV", "track.retrig": "RETRIG", "track.loop": "LOOP",
+    "track.loop.scale": "LOOP", "track.loop.nudge": "LOOP",
+    "track.loop.slice": "LOOP",
+}
+
+
+def _gc_watch(engine):
+    """A gc callback counting collections that run on this engine's audio
+    thread, and the longest. Holds the engine only weakly."""
+    ref = weakref.ref(engine)
+
+    def hook(phase, info):
+        e = ref()
+        if e is None or threading.get_ident() != e._audio_ident:
+            return
+        if phase == "start":
+            e._gc_t0 = time.perf_counter()
+        else:
+            e.gc_audio += 1
+            ms = (time.perf_counter() - e._gc_t0) * 1000.0
+            if ms > e.gc_audio_max_ms:
+                e.gc_audio_max_ms = ms
+    return hook
 
 
 class Pad:
@@ -196,8 +230,22 @@ class Engine:
         self.master_gain = 0.70
         self._mg = 0.70
         self.cmds = collections.deque()
-        self._pending = []
-        self.pending_labels = []
+        # The quantised queue, preallocated: two fixed slot arrays and a count,
+        # compacted in place, so draining, collapsing, cancelling and firing never
+        # build a container on the audio thread. Measured, the lists this replaces
+        # never set a collection off — they came from CPython's free lists and
+        # died in the block that made them — so this is allocation-free by
+        # construction rather than by the allocator's good grace.
+        self._q_op = [None] * QUEUE_CAP
+        self._q_kw = [None] * QUEUE_CAP
+        self._q_n = 0
+        self.queue_overflow = 0
+        # Which thread runs the callback, and what the collector did there.
+        self._audio_ident = None
+        self.gc_audio = 0
+        self.gc_audio_max_ms = 0.0
+        self._gc_t0 = 0.0
+        self._gc_hook = None
 
         # How long a command sat in the queue before the audio thread took it.
         # This is the only stage of the path the engine can see; the wire and
@@ -235,6 +283,7 @@ class Engine:
     # lifecycle
     # ==================================================================
     def start(self):
+        self.watch_gc()
         self._t_start = time.perf_counter()
         if self.offline:
             self.stream = NullStream(self)
@@ -251,6 +300,7 @@ class Engine:
         return self
 
     def stop(self):
+        self.unwatch_gc()
         if self.stream is not None:
             self.stream.stop()
             self.stream.close()
@@ -277,6 +327,8 @@ class Engine:
     # callback
     # ==================================================================
     def _callback(self, outdata, frames, time_info, status):
+        if self._audio_ident is None:
+            self._audio_ident = threading.get_ident()   # once; the gc watch keys on it
         if status:
             self.xruns += 1
             if len(self._xrun_log) < 512:
@@ -298,7 +350,7 @@ class Engine:
         # A queue must never be unreachable. If the clock is not running there
         # are no boundaries to wait for, so drain it now rather than let it
         # strand and fire on the next start.
-        if self._pending and not self.transport.playing:
+        if self._q_n and not self.transport.playing:
             self._fire()
 
         off = 0
@@ -306,12 +358,12 @@ class Engine:
         while off < frames and guard < 64:
             guard += 1
             n = frames - off
-            if self._pending:
+            if self._q_n:
                 d = self.transport.frames_to_boundary()
                 if d == 0:
                     self._fire()
                     d = self.transport.frames_to_boundary()
-                if self._pending and d > 0:
+                if self._q_n and d > 0:
                     n = min(n, d)
             self._render_span(mix[off:off + n], n)
             self.transport.advance(n)
@@ -361,12 +413,20 @@ class Engine:
     def _render_span(self, out, n):
         if n <= 0:
             return
-        any_solo = any(t.solo for t in self.tracks)
-        for t in self.tracks:
-            t.render(out, n, self.sr, any_solo)
-        for v in self.voices.voices:
-            if v.active:
-                v.render(out, n, self.sr)
+        # Index loops: a list iterator, or the generator any() needs, is a
+        # collector-tracked object with no free list, built every span.
+        tracks = self.tracks
+        any_solo = False
+        for k in range(len(tracks)):
+            if tracks[k].solo:
+                any_solo = True
+                break
+        for k in range(len(tracks)):
+            tracks[k].render(out, n, self.sr, any_solo)
+        voices = self.voices.voices
+        for k in range(len(voices)):
+            if voices[k].active:
+                voices[k].render(out, n, self.sr)
 
     # ==================================================================
     # commands
@@ -385,28 +445,56 @@ class Engine:
                 self._lat_n += 1
             if op in QUANTIZED and self.transport.playing and \
                     self.transport.quantum_beats > 0:
-                # Last edit wins. A drag emits a command per pointer move, so
-                # without this a two-second wait at BAR piles up a hundred
-                # redundant region changes that all fire at once.
-                i = kw.get("i")
-                if i is not None:
-                    self._pending = [(o, k) for (o, k) in self._pending
-                                     if not (o == op and k.get("i") == i)]
-                self._pending.append((op, kw))
-                self._label_pending(op, kw)
+                self._enqueue(op, kw)
             else:
                 self._apply(op, kw)
+
+    @property
+    def _pending(self):
+        """The queue as (op, kw) pairs — a copy, for tests and the telemetry
+        thread. The callback never reads this; it reads _q_n."""
+        return [(self._q_op[k], self._q_kw[k]) for k in range(self._q_n)]
+
+    @property
+    def pending_labels(self):
+        return [self._q_op[k] for k in range(self._q_n)]
+
+    def _enqueue(self, op, kw):
+        """Last edit wins. A drag emits a command per pointer move, so without
+        this a two-second wait at BAR piles up a hundred redundant region
+        changes that all fire at once. The earlier entry for the same (op,
+        index) is removed by shifting the rest down and the new one goes to
+        the back — the order edits arrived in is the order they apply."""
+        ops, kws, n = self._q_op, self._q_kw, self._q_n
+        i = kw.get("i")
+        if i is not None:
+            k = 0
+            while k < n:
+                if ops[k] == op and kws[k].get("i") == i:
+                    j = k
+                    while j < n - 1:
+                        ops[j] = ops[j + 1]
+                        kws[j] = kws[j + 1]
+                        j += 1
+                    n -= 1
+                    ops[n] = None
+                    kws[n] = None
+                else:
+                    k += 1
+        if n >= QUEUE_CAP:
+            self._q_n = n
+            self.queue_overflow += 1
+            self._apply(op, kw)
+            return
+        ops[n] = op
+        kws[n] = kw
+        self._q_n = n + 1
+        self._label_pending(op, kw)
 
     def _label_pending(self, op, kw):
         i = kw.get("i")
         if op.startswith("track.") and isinstance(i, int) and 0 <= i < len(self.tracks):
-            self.tracks[i].queued = {
-                "track.play": "START", "track.stop": "STOP",
-                "track.toggle": "TOGGLE", "track.rev": "REV",
-                "track.retrig": "RETRIG", "track.loop": "LOOP",
-                "track.loop.scale": "LOOP", "track.loop.nudge": "LOOP",
-                "track.loop.slice": "LOOP"}.get(op, op)
-        self.pending_labels = [o for o, _ in self._pending]
+            self.tracks[i].queued = QUEUED_LABEL.get(op, op)
 
     def _stop_sound(self):
         """SPACE stops what you hear, not just the clock.
@@ -433,31 +521,47 @@ class Engine:
         simply clear, which is the panel saying the queue is gone rather than
         pretending it landed.
         """
-        if not self._pending:
+        ops, kws, n = self._q_op, self._q_kw, self._q_n
+        w = 0
+        for k in range(n):
+            if ops[k] not in LAUNCH:
+                ops[w] = ops[k]
+                kws[w] = kws[k]
+                w += 1
+        if w == n:
             return
-        kept = [(o, k) for (o, k) in self._pending if o not in LAUNCH]
-        if len(kept) == len(self._pending):
-            return
-        self._pending = kept
+        for k in range(w, n):
+            ops[k] = None
+            kws[k] = None
+        self._q_n = w
         self._relabel()
 
     def _relabel(self):
         """Rebuild the queued labels from the queue itself."""
-        for t in self.tracks:
-            t.queued = None
-        for op, kw in self._pending:
-            self._label_pending(op, kw)
-        self.pending_labels = [o for o, _ in self._pending]
+        tracks = self.tracks
+        for k in range(len(tracks)):
+            tracks[k].queued = None
+        ops, kws = self._q_op, self._q_kw
+        for k in range(self._q_n):
+            self._label_pending(ops[k], kws[k])
 
     def _fire(self):
-        pend, self._pending = self._pending, []
-        for op, kw in pend:
+        # Emptied before applying; nothing _apply does enqueues (transport ops,
+        # the only ones that touch the queue, are never quantised themselves).
+        ops, kws, n = self._q_op, self._q_kw, self._q_n
+        self._q_n = 0
+        for k in range(n):
+            op = ops[k]
+            kw = kws[k]
+            ops[k] = None
+            kws[k] = None
             self._apply(op, kw)
-        for t in self.tracks:
+        tracks = self.tracks
+        for k in range(len(tracks)):
+            t = tracks[k]
             if t.queued is not None:
                 t.queued = None
                 t.fired += 1
-        self.pending_labels = []
 
     def _t(self, kw):
         i = kw.get("i", -1)
@@ -779,6 +883,23 @@ class Engine:
             "backend": "null" if self.offline else "portaudio",
         }
 
+    def watch_gc(self):
+        """Count garbage collections that run on the audio thread, and the
+        longest. A collection holds the interpreter lock for its whole length
+        wherever it runs; the ones on the callback's own thread are the ones
+        this engine could have set off itself."""
+        if self._gc_hook is None:
+            self._gc_hook = _gc_watch(self)
+            gc.callbacks.append(self._gc_hook)
+
+    def unwatch_gc(self):
+        if self._gc_hook is not None:
+            try:
+                gc.callbacks.remove(self._gc_hook)
+            except ValueError:
+                pass
+            self._gc_hook = None
+
     def capture(self, seconds):
         """Start recording what the device consumes, into one preallocated buffer.
 
@@ -813,7 +934,13 @@ class Engine:
                 for (t, b, u, o, p) in self._xrun_log]
 
     def _pending_pads(self):
-        return {kw.get("i") for op, kw in self._pending if op == "pad.trigger.q"}
+        out = set()                       # telemetry thread; allocation is fine here
+        ops, kws = self._q_op, self._q_kw
+        for k in range(self._q_n):
+            kw = kws[k]
+            if ops[k] == "pad.trigger.q" and kw is not None:
+                out.add(kw.get("i"))
+        return out
 
     def scope(self, points=512):
         """Most recent `points` frames of master out, oldest first, int8."""
@@ -859,9 +986,12 @@ class Engine:
             "pos": tr.pos,
             "quantum": QUANTUM_LABELS[tr.quantum_i],
             "quantum_i": tr.quantum_i,
-            "pending": len(self._pending),
+            "pending": self._q_n,
+            "queue_overflow": self.queue_overflow,
+            "gc_audio": self.gc_audio,
+            "gc_audio_max_ms": round(self.gc_audio_max_ms, 3),
             "pending_ms": round(self.transport.frames_to_boundary()
-                                / self.sr * 1000.0, 0) if self._pending else 0,
+                                / self.sr * 1000.0, 0) if self._q_n else 0,
             "master": round(self.master_gain, 3),
             "mpeak": [round(float(self.master_peak[0]), 4),
                       round(float(self.master_peak[1]), 4)],
