@@ -438,6 +438,51 @@ a hi-hat at 44.1 kHz legitimately swings full scale between adjacent samples,
 and an earlier pass of this analysis produced meaningless numbers for exactly
 that reason. The captures are the honest artefact; a person has to play them.
 
+**A long take under load.** Work order 7 asked for xruns over a long recording
+under load — the situation that produced the earlier dropout. Two runs, on an
+i5-2400 with four cores and 16 GB, 3.6 GB of swap in use, PipeWire 1.0.5 at
+48 kHz and 256 frames, no real-time priority for the process (`ulimit -r` is 0),
+and another LOOP ENGINE playing through the same device throughout. The rig is
+work order 7's: three muted four-minute tracks playing, the master at zero,
+five-minute phases each adding a load on other threads.
+
+| phase | take | xruns | blocks | writer at most behind |
+|---|---|---|---|---|
+| a set: a 4-min file loading every 3 s, telemetry, a drag | no | 11 | 56,589 | — |
+| nothing else | yes | 0 | 56,625 | 59 ms |
+| a set | yes | 16 | 56,573 | 69 ms |
+| decoding a 44 MB file back to back | yes | 0 | 40,696 — then the stream stopped | 64 ms |
+| *second run* | | | | |
+| decoding a 44 MB file back to back | yes | 1 | 56,624 | 64 ms |
+| writing 256 MB files to the same disk, fsync'd | yes | 0 | 59,572 | 6,853 ms |
+| a set | yes | 20 | 56,556 | 107 ms |
+| a set | no | 0 | 56,625 | — |
+| a set | yes | 0 | 56,626 | 59 ms |
+
+Three takes, 34 minutes between them. In every one the frames the callback
+copied, the frames written and the frames in the WAV header are the same number,
+and nothing was lost. No collection ran on the audio thread in any phase. The
+disk stall was the one the ring is there for: with another thread writing and
+syncing 256 MB files, the writer fell 6.9 s behind, and the 30 s ring held all
+of it.
+
+**The take is not what makes the xruns.** Under the same set's load they came
+and went with the state of the machine, not with the take: 11 and 0 without one,
+16, 20 and 0 with one. The 20 were timed against the loads: every one fell
+within 2.2 s of a file starting to load — clustered at 0.1–0.3 s and 1.7–2.2 s —
+and none in the last 0.8 s of the three-second cycle, where a quarter would land
+by chance. That is the load's decode and analysis on a machine that is paging.
+The thirty-second table under *Traps* records a set at 0 xruns; five minutes at
+a time it is anywhere from 0 to 20.
+
+**The stream stopped once.** Eighteen minutes into the first run the device
+stopped calling back altogether — no error, no xrun reported, nothing in the
+journal. The decode phase got 217 s of blocks and the disk phase none; the take
+stopped growing and closed cleanly with everything it had been given. It did
+not recur in the second run's 25 minutes under a watchdog. The engine cannot
+notice it today: the panel would show a frozen clock and still meters, and the
+room would be silent.
+
 ## Traps
 
 Thirteen things that looked like they worked. Each cost real time, and each
@@ -502,6 +547,11 @@ the callback builds no container by construction, and every snapshot now counts
 the collections that land on the audio thread. The same phases afterwards: 0, 0,
 0, 0 — and 382 for the loop that no queue change can reach. *Nothing in the
 engine or the panel runs a loop like that. Keep it that way.*
+Those phases were thirty seconds long. Five-minute phases of the same set's
+load, measured for the recording in work order 7, gave anywhere from 0 to 20
+xruns, each within two seconds of a file starting to load and none with a
+collection on the audio thread — see *A long take under load*. The finding
+about allocation stands; the zero for a set was a short sample.
 
 **A fix that was right for one kind of work and wrong for the other.** "A
 stopped clock has no edges" unstuck a queue that could strand and later revert
