@@ -185,6 +185,12 @@ body.helping [data-help] { opacity: 1; }
 
 .pending-line { font-size: var(--t1); line-height: var(--lh1); margin-top: var(--s2); opacity: var(--dim2); }
 .pending-line.armed { opacity: 1; color: var(--accent); }  /* ACCENT 2 — queued */
+/* A session name can be any length. One line, always, so a long name can never
+   push the master meter down the rail. */
+#session-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The browser's title changes between loading audio and opening a session;
+   both live in one reserved box so switching moves nothing beside it. */
+#b-title { flex: 0 0 var(--w-btitle); }
 
 .master-meters { display: flex; flex-direction: column; flex: 1; margin-top: var(--s3); }
 #mmeter { width: 100%; flex: 1 1 0; min-height: 0; height: 0;
@@ -199,11 +205,11 @@ body.helping [data-help] { opacity: 1; }
 /* ── TRACK STRIPS ────────────────────────────────────────────────────── */
 #tracks { display: flex; flex-direction: column; overflow: hidden; position: relative; }
 #strips { position: relative; overflow-y: auto; }
-#strips, .b-list, .keys { scrollbar-width: thin; scrollbar-color: var(--n2) var(--bg); }
+#strips, .b-list, .keys, .err { scrollbar-width: thin; scrollbar-color: var(--n2) var(--bg); }
 #strips::-webkit-scrollbar, .b-list::-webkit-scrollbar,
-.keys::-webkit-scrollbar { width: var(--s2); }
+.keys::-webkit-scrollbar, .err::-webkit-scrollbar { width: var(--s2); }
 #strips::-webkit-scrollbar-thumb, .b-list::-webkit-scrollbar-thumb,
-.keys::-webkit-scrollbar-thumb { background: var(--n2); }
+.keys::-webkit-scrollbar-thumb, .err::-webkit-scrollbar-thumb { background: var(--n2); }
 
 .strip {
   display: grid; grid-template-columns: var(--strip-cols);
@@ -290,6 +296,9 @@ body.helping [data-help] { opacity: 1; }
   height: var(--lh4); padding: 0 var(--s3);
   background: var(--n1); border-bottom: var(--line);
   flex-wrap: nowrap; overflow: hidden; white-space: nowrap;
+  /* overflow: hidden takes a flex item's minimum height to zero, so in a
+     column whose content runs long the bar would be the first thing squeezed */
+  flex: none;
 }
 .panel-bar > .btn, .panel-bar > .seg { flex: none; }
 .panel-title {
@@ -499,8 +508,12 @@ kbd {
 /* The wordmark is letterspaced; without this it starts a hair right of the
    panel edges below it. Baseline, not box, is what the eye lines up. */
 .mark { margin-left: calc(var(--tr-legend) * -0.5); }
+/* The note has a place of its own, the same height whether it says anything or
+   not, so a note appearing or clearing moves nothing below it. A long one
+   scrolls inside its box instead of pushing the key legend down the plate. */
+.note-slot { flex: none; height: var(--h-note); padding: 0 var(--s4) var(--s3); }
 .err {
-  margin: 0 var(--s4) var(--s3); padding: var(--s3);
+  max-height: 100%; overflow-y: auto; padding: var(--s3);
   border: var(--line); border-left-width: var(--s1); border-left-color: var(--fg);
   font-size: var(--t2); line-height: var(--lh2);
 }

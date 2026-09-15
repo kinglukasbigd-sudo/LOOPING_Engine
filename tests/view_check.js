@@ -220,4 +220,27 @@ const MIN4 = 48000 * 240;           // the brief's four-minute file: 11,520,000 
   check('a lost reply releases the slot after the timeout', !!(rel && rel.view === 'b'));
 }
 
+// ── views travel with a session ──────────────────────────────────────────
+{
+  const a = V.store();
+  a.set('track:0', 'bass.wav|11520000', { vs: 2e6, ve: 2.1e6 });
+  a.set('key:5', 'stab.wav|185806', { vs: 10, ve: 400 });
+  const wire = JSON.parse(JSON.stringify(a.entries()));
+  const b = V.store();
+  b.set('track:3', 'old.wav|99', { vs: 1, ve: 2 });
+  b.restore(wire);
+  const t0 = b.get('track:0', 'bass.wav|11520000', 11520000);
+  check('views saved with a session come back through JSON exactly',
+        t0.vs === 2e6 && t0.ve === 2.1e6 && b.peek('key:5', 'stab.wav|185806').ve === 400,
+        `${t0.vs}..${t0.ve}`);
+  check('loading a session drops the views of the set it replaced',
+        b.peek('track:3', 'old.wav|99') === null);
+  const c = V.store();
+  c.restore({ 'track:1': { sig: 'x|1', vs: 5, ve: 2 }, 'track:2': { sig: 'y|1', vs: 'a', ve: 9 },
+              'track:3': { sig: 'z|1', vs: -4, ve: 9 }, 'track:4': { vs: 0, ve: 9 },
+              'track:5': { sig: 'ok|100', vs: 0, ve: 50 } });
+  check('a hand-edited view that is not a real window is dropped, not trusted',
+        Object.keys(c.entries()).join() === 'track:5', Object.keys(c.entries()).join());
+}
+
 process.exitCode = fails ? 1 : 0;

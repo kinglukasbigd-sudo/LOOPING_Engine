@@ -85,7 +85,11 @@
   --w-title-min: 80px; /* ...when the bar is short: "TRACK 6 —" and a little name */
   --w-subject: 44px;  /* TRACK 8 / KEY W — the inspector's subject */
   --w-frames:  11ch;  /* 134,217,728: an offset in the longest stereo file 1024 MB holds */
+  --w-btitle:  16ch;  /* LOAD → TRACK 8 and OPEN SESSION share one title box */
   --w-label:   58px;  /* an inspector row label        */
+  /* the inspector note's place: four body lines, padding, border and the gap
+     under it — the same height whether a note is showing or not */
+  --h-note: calc(4 * var(--lh2) + 3 * var(--s3) + 2 * var(--hair));
   --w-big:     78px;  /* the tempo readout             */
   --w-mid:     52px;  /* the master readout            */
   --kbd:       17px;  /* a key cap — square, centred   */

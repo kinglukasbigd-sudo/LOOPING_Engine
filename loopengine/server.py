@@ -239,6 +239,8 @@ def make_handler(app):
             q = self._q()
             if path == "/api/browse":
                 return self._json(app.browse(q.get("dir", [""])[0]))
+            if path == "/api/sessions":
+                return self._json(app.session_list())
             if path == "/api/devices":
                 return self._json(app.devices())
             if path == "/api/latency":

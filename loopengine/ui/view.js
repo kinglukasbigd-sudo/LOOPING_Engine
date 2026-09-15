@@ -204,6 +204,25 @@
         return e && e.sig === sig ? e.v : null;
       },
       set(id, sig, v) { m.set(id, { sig, v }); },
+      /* For SAVE: every view, with the file signature it belongs to. */
+      entries() {
+        const out = {};
+        for (const [id, e] of m) out[id] = { sig: e.sig, vs: e.v.vs, ve: e.v.ve };
+        return out;
+      },
+      /* For OPEN: the views a session saved. A loaded session replaces the
+         whole set, so the old views go; an entry that is not a real window
+         is dropped rather than trusted — the file is plain JSON. */
+      restore(obj) {
+        m.clear();
+        for (const id of Object.keys(obj || {})) {
+          const e = obj[id];
+          if (e && typeof e.sig === 'string' && Number.isFinite(e.vs)
+              && Number.isFinite(e.ve) && e.ve > e.vs && e.vs >= 0) {
+            m.set(id, { sig: e.sig, v: { vs: e.vs, ve: e.ve } });
+          }
+        }
+      },
     };
   }
 

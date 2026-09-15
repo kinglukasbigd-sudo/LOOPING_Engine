@@ -169,26 +169,6 @@ def t_cli_file_mode_enforces_allow():
           (r2.stdout or r2.stderr).strip()[:56])
 
 
-def t_restart_gap_is_latent_not_live():
-    """No session file exists, so nothing carries a path across a restart.
-
-    This asserts the absence deliberately: if session save/load is ever
-    added, this test fails and forces the grant question to be answered
-    rather than rediscovered.
-    """
-    import glob
-    srcs = glob.glob(os.path.join(ROOT, "loopengine", "*.py"))
-    hits = []
-    for f in srcs:
-        txt = open(f).read()
-        if any(k in txt for k in ("def save_session", "def load_session",
-                                  "session.json", "SESSION_FILE")):
-            hits.append(os.path.basename(f))
-    check("no session persistence exists yet, so no grant can go stale on "
-          "restart", not hits,
-          "found in %s — grants must now be resolved" % hits if hits else "")
-
-
 if __name__ == "__main__":
     if not os.path.isfile(OUTSIDE):
         print("skipped: %s not present on this machine" % OUTSIDE)
@@ -197,8 +177,7 @@ if __name__ == "__main__":
                t_offline_refuses_outside_and_names_the_file,
                t_offline_accepts_it_when_allowed,
                t_offline_matches_live_sample_for_sample,
-               t_cli_file_mode_enforces_allow,
-               t_restart_gap_is_latent_not_live):
+               t_cli_file_mode_enforces_allow):
         try:
             fn()
         except Exception as exc:

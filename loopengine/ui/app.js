@@ -67,6 +67,7 @@ const HELP = {
   msr:     ['MUTE SOLO REVERSE', 'Mute, solo, and play backwards. Reverse waits for the quantum.'],
   q:       ['WAITING',           'Shows what this track is waiting to do at the next boundary.'],
   pads:    ['KEYS',              'Each key holds its own sound and loop, and keeps them when you change the track.'],
+  session: ['SESSION',           'SAVE writes every track, key, region and zoom to a file. OPEN puts a set back.'],
 };
 
 /* Reserved, not derived: the inspector holds this many rows whether it is
@@ -173,6 +174,8 @@ paints its own result locally instead of waiting for the engine to answer.`);
     if (typeof ev.data === 'string') {
       const msg = JSON.parse(ev.data);
       if (msg.op === 'picked') { onPicked(msg); return; }
+      if (msg.op === 'session.saved') { onSessionSaved(msg); return; }
+      if (msg.op === 'session.loaded') { onSessionLoaded(msg); return; }
       S = msg;
       if (S.probe_id === probe.id && probe.sentAt) {
         // A probe is answered by the next telemetry frame, so one reading
@@ -582,6 +585,46 @@ function paintAwaiting() {
 }
 
 /* Cancel is a normal outcome: the slot goes back to exactly what it showed. */
+/* ── sessions ───────────────────────────────────────────────────────── */
+/* The rail's session line follows the server's own state, so every open panel
+   agrees. A press paints its line first as a prediction, and the reply clears
+   the prediction the moment it lands. */
+function sessionText(s) {
+  if (!s || !s.state) return 'nothing saved yet';
+  const n = Object.keys(s.missing || {}).length;
+  if (s.state === 'loading') return 'loading ' + s.name;
+  if (s.state === 'loaded') return 'loaded ' + s.name + (n ? ' — ' + n + ' missing' : '');
+  if (s.state === 'saved') return 'saved ' + s.name + (n ? ' — ' + n + ' missing' : '');
+  return 'failed — the reason is in the inspector';
+}
+function slotName(id) {
+  const [kind, i] = id.split(':');
+  return kind === 'key' ? 'key ' + (PAD_CAPS[+i] || +i + 1) : 'track ' + (+i + 1);
+}
+function onSessionSaved(msg) {
+  OPT.delete('sessionLine');
+  if (msg.error) { localError = msg.error; return; }
+  const notes = [];
+  if (msg.unsaved && msg.unsaved.length)
+    notes.push('Saved, but not everything: ' + msg.unsaved.join('; ') + '.');
+  /* a save made while a file is away keeps its slot, so it says it did */
+  if (msg.kept && msg.kept.length)
+    notes.push('Still missing, and kept in the session so they load once the files are back: '
+               + msg.kept.join('; ') + '.');
+  localError = notes.join(' ');
+}
+function onSessionLoaded(msg) {
+  OPT.delete('sessionLine');
+  if (msg.error) { localError = msg.error; return; }
+  views.restore(msg.views);            // each track's and key's zoom, as saved
+  ranges.clear();
+  lastInk = '';
+  const miss = Object.entries(msg.missing || {});
+  localError = miss.length
+    ? 'Loaded without ' + miss.map(([slot, m]) => `${slotName(slot)} — ${m.name} ${m.reason}`).join('; ') + '.'
+    : '';
+}
+
 function onPicked(msg) {
   clearTimeout(openPicker._t);
   awaitingPick = null;
@@ -698,6 +741,7 @@ function renderState() {
       + ` (${S.quantum.toLowerCase()})`
     : 'nothing queued');
   pend.classList.toggle('armed', depth > 0);
+  setText($('#session-line'), settled('sessionLine', sessionText(S.session)));
   setText($('#master-db'), dB(S.master));
   if (document.activeElement !== $('#master')) $('#master').value = S.master;
 
@@ -710,9 +754,11 @@ function renderState() {
     el.classList.toggle('empty-row', !t.loaded);
     const playing = settled(`${i}.playing`, t.playing);
     el.classList.toggle('playing', playing);
+    /* A slot a session could not fill says so, by file name, where the name goes. */
+    const gone = !t.loaded && S.session && S.session.missing && S.session.missing['track:' + i];
     setText(el.querySelector('.c-name'),
             i === awaitingPick ? 'waiting for the file dialog'
-                               : (t.loaded ? t.name : 'empty'));
+                               : (t.loaded ? t.name : (gone ? 'missing — ' + gone.name : 'empty')));
     setText(el.querySelector('.c-bpm'),
             !t.loaded ? '—' : (t.analysing ? '···' : fx(t.bpm, 1)));
     setText(el.querySelector('.c-len'),
@@ -756,7 +802,9 @@ function renderState() {
        audio when the track moves on, so "T5/S01" named a track that may
        since have been replaced — provenance that goes stale and reads as
        fact. The filename is the one thing that stays true. */
-    setText(el.querySelector('.p-label'), mapped ? p.name : 'unassigned');
+    const gone = !mapped && S.session && S.session.missing && S.session.missing['key:' + i];
+    setText(el.querySelector('.p-label'),
+            mapped ? p.name : (gone ? 'missing — ' + gone.name : 'unassigned'));
     setText(el.querySelector('.p-mode'), mapped ? p.mode : '—');
     const [pls, ple] = liveLoop(i, { kind: 'key', i, ls: p.ls, le: p.le });
     paintKeySpan(el, i, pls, ple, p.frames);
@@ -823,11 +871,12 @@ function renderInspector() {
       + (t.analysing ? 'analysing' :
          `${t.slices} slices` + (m.slice_method ? ` (${m.slice_method})` : '')));
 
+  /* One note at a time, in the box kept for it. A new note starts at its first
+     line, even if the last one had been scrolled. */
   const err = $('#i-error');
-  if (localError) { err.hidden = false; setText(err, localError); }
-  else if (m.error) { err.hidden = false; err.textContent = m.error; }
-  else if (S.error) { err.hidden = false; err.textContent = S.error; }
-  else err.hidden = true;
+  const note = localError || m.error || S.error || '';
+  if (err.textContent !== note) { err.textContent = note; err.scrollTop = 0; }
+  err.hidden = !note;
 
   const pan = t.pan === 0 ? 'C'
     : (t.pan < 0 ? 'L' : 'R') + fx(Math.abs(t.pan) * 100, 0);
@@ -1387,6 +1436,12 @@ const ACT = {
   },
   reslice: () => send({ op: 'reslice', i: focus, n: 16 }),
   browse:  () => openBrowser(),
+  save:    () => {
+    predict('sessionLine', 'saving…', 5000);
+    setText($('#session-line'), 'saving…');                 // paint first
+    send({ op: 'session.save', views: views.entries() });
+  },
+  open:    () => openSessions(),
   pick:    () => openPicker(true),
   unload:  () => send({ op: 'unload', i: focus }),
   mappads: () => send({ op: 'pads.map', track: focus, mode: padMode }),
@@ -1516,7 +1571,9 @@ window.addEventListener('blur', () => {
 /* ── file browser (replaces the pad grid — no modal) ─────────────────── */
 function browserOpen() { return $('#browser').classList.contains('open'); }
 function openBrowser() {
+  $('#b-title').innerHTML = 'LOAD → TRACK <b id="b-target"></b>';
   $('#b-target').textContent = focus + 1;
+  $('[data-act="b-up"]').style.visibility = '';
   $('#browser').classList.add('open');        // paint first
   $('#browser').setAttribute('aria-hidden', 'false');
   browseTo($('#b-dir').dataset.dir || '');
@@ -1524,6 +1581,48 @@ function openBrowser() {
 function closeBrowser() {
   $('#browser').classList.remove('open');
   $('#browser').setAttribute('aria-hidden', 'true');
+}
+
+/* OPEN: the same panel, in the same place, listing saved sets instead of audio.
+   Names from disk go in as text, never as markup. */
+async function openSessions() {
+  $('#b-title').textContent = 'OPEN SESSION';
+  $('[data-act="b-up"]').style.visibility = 'hidden';     // keeps its box
+  const list = $('#b-list');
+  list.innerHTML = '<div class="b-row"><span class="k">—</span><span class="nm"></span></div>';
+  list.querySelector('.nm').textContent = 'reading the sessions folder…';
+  $('#browser').classList.add('open');                    // paint first
+  $('#browser').setAttribute('aria-hidden', 'false');
+  let d;
+  try {
+    d = await (await fetch(`/api/sessions?t=${encodeURIComponent(TOKEN)}`)).json();
+  } catch (e) {
+    list.querySelector('.nm').textContent = 'Could not reach the engine to list sessions.';
+    return;
+  }
+  $('#b-dir').textContent = d.dir;
+  if (!d.sessions.length) {
+    list.querySelector('.nm').textContent = 'No sessions saved yet. SAVE writes one here.';
+    return;
+  }
+  list.innerHTML = d.sessions.map(() => `
+    <div class="b-row">
+      <span class="k"></span><span class="nm"></span><span class="sz"></span><span class="to"></span>
+    </div>`).join('');
+  list.querySelectorAll('.b-row').forEach((row, k) => {
+    const x = d.sessions[k];
+    row.querySelector('.k').textContent = x.error ? 'ERR' : 'SET';
+    row.querySelector('.nm').textContent = x.error ? x.name + ' — ' + x.error
+      : x.name + (x.saved ? '   ' + x.saved.slice(0, 16).replace('T', ' ') : '');
+    row.querySelector('.sz').textContent = x.error ? '' : `${x.tracks}T ${x.keys}K`;
+    if (x.error) return;
+    row.addEventListener('click', () => {
+      predict('sessionLine', 'loading ' + x.name, 5000);
+      setText($('#session-line'), 'loading ' + x.name);   // paint first
+      send({ op: 'session.load', name: x.name });
+      closeBrowser();
+    });
+  });
 }
 
 async function browseTo(dir) {

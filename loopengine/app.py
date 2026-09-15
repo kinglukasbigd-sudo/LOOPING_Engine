@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import collections
+import math
 import os
 import struct
 import threading
@@ -10,17 +11,24 @@ import time
 import numpy as np
 
 from . import picker
-from .loader import Loader, AUDIO_EXT
+from . import session
+from .loader import AUDIO_EXT, DecodeError, Loader, decode
 from .server import (Hub, new_token, OP_BIN, BIN_SCOPE, BIN_PEAKS,
                      BIN_PEAKS_PAD, BIN_PEAKS_RANGE)
 from . import dsp
 from .track import MODES
+from .voice import GATE, LOOP, ONESHOT
 
 MAX_UPLOAD = 200 * 1024 * 1024
 
 
+KEY_CAPS = "1234QWERASDFZXCV"   # key slot -> the cap on the keyboard
+KEY_MODES = (ONESHOT, GATE, LOOP)
+
+
 class App:
-    def __init__(self, engine, roots=None, inbox=".inbox", fps=30):
+    def __init__(self, engine, roots=None, inbox=".inbox", fps=30,
+                 sessions_dir=None, session_key=None):
         self.engine = engine
         self.token = new_token()
         self.hub = Hub()
@@ -40,6 +48,14 @@ class App:
         self._granted = collections.OrderedDict()
         self._pick_seq = 0
         self.meta = {}      # track index -> dict of analysis results
+        home = os.path.expanduser("~/.loopengine")
+        self.sessions_dir = os.path.realpath(os.path.expanduser(
+            sessions_dir or os.path.join(home, "sessions")))
+        self.session_key_path = session_key or os.path.join(home, "session.key")
+        self.session = {"name": "", "state": "", "error": "", "missing": {}}
+        # The saved rows behind the missing marks. A save made while a file is
+        # away writes them back, so the reference does not leave with the drive.
+        self._kept = {}
         self._stop = threading.Event()
 
     # -- telemetry ---------------------------------------------------------
@@ -52,6 +68,7 @@ class App:
                 snap = self.engine.snapshot()
                 snap["op"] = "state"
                 snap["meta"] = self.meta
+                snap["session"] = self.session
                 self.hub.text(snap)
                 sc = self.engine.scope(512)
                 self.hub.broadcast(
@@ -214,12 +231,17 @@ class App:
         op = msg.get("op", "")
         if op == "peaks.range":
             return self._peaks_range(msg, client)
+        if op == "session.save":
+            return self._session_save(msg)
+        if op == "session.load":
+            return self._session_load_async(msg)
         if op == "load":
             i, path = int(msg["i"]), msg["path"]
             if not self._inside_roots(path):
                 return self._load_error(i, "%s is outside the folders this "
                                            "run is allowed to read." % path)
             self.meta.setdefault(i, {})["error"] = ""
+            self._forget_missing("track:%d" % i)
             self.loader.load_async(i, path, int(msg.get("slices", 16)))
         elif op == "pick":
             self.pick_async(int(msg.get("i", 0)), bool(msg.get("multiple")),
@@ -229,6 +251,7 @@ class App:
         elif op == "unload":
             i = int(msg["i"])
             self.engine.post("track.clear", i=i)
+            self._forget_missing("track:%d" % i)
             self.peaks.pop(i, None)
             self.meta.pop(i, None)
         elif op == "mode":
@@ -241,12 +264,14 @@ class App:
             # survives that track being replaced
             t = int(msg.get("track", -1))
             i = int(msg.get("i", 0))
+            self._forget_missing("key:%d" % i)
             if t in self.peaks:
                 self.pad_peaks[i] = self.peaks[t]
                 self.hub.pad_peaks(i, self.peaks[t])
             self.engine.post("pad.take", **{k: v for k, v in msg.items() if k != "op"})
         elif op == "pad.clear":
             self.pad_peaks.pop(int(msg.get("i", 0)), None)
+            self._forget_missing("key:%d" % int(msg.get("i", 0)))
             self.engine.post("pad.clear", **{k: v for k, v in msg.items() if k != "op"})
         elif op == "pads.map":
             self.map_pads(int(msg["track"]), msg.get("mode", "ONE"))
@@ -301,6 +326,422 @@ class App:
                            frames, data.shape[0])
         client.send(OP_BIN, head + q.tobytes())
 
+    # -- sessions ------------------------------------------------------------
+    def _inside_roots_only(self, p):
+        """Inside --root or the inbox, grants aside: reachable without the dialog."""
+        rp = os.path.realpath(p)
+        return any(rp == r or rp.startswith(r + os.sep)
+                   for r in self.roots + [self.inbox])
+
+    def _forget_missing(self, slot):
+        """A slot filled or cleared by hand lets its old reference go.
+
+        Copied and swapped, never changed in place: the telemetry thread may be
+        serialising the old dict this moment, and a dict must not change size
+        under its iterator."""
+        if slot in self.session["missing"]:
+            m = dict(self.session["missing"])
+            del m[slot]
+            self.session["missing"] = m
+        if slot in self._kept:
+            k = dict(self._kept)
+            del k[slot]
+            self._kept = k
+
+    def session_list(self):
+        return {"dir": self.sessions_dir,
+                "sessions": session.listing(self.sessions_dir)}
+
+    def _session_save(self, msg):
+        views = msg.get("views")
+        try:
+            path, _doc, unsaved, kept = self.save_session(
+                views if isinstance(views, dict) else {}, msg.get("name"))
+            reply = {"op": "session.saved", "name": os.path.basename(path),
+                     "unsaved": unsaved, "kept": kept, "error": ""}
+            self.session.update(name=reply["name"], state="saved", error="")
+        except Exception as e:                       # a reply always lands
+            reply = {"op": "session.saved", "name": "", "unsaved": [], "kept": [],
+                     "error": "The session was not saved — %s."
+                              % (getattr(e, "strerror", None) or e)}
+            self.session.update(state="failed", error=reply["error"])
+        self.hub.text(reply)
+
+    def save_session(self, views, name=None):
+        """Write the set to a file in the sessions folder. -> (path, doc, unsaved).
+
+        Engine state is read from this thread: plain attributes, and a session
+        is a picture of a moment. A track or key with no file behind it — audio
+        that only ever existed in memory — cannot be saved, and is named in
+        `unsaved` rather than silently left out. A slot the loaded session
+        could not fill, and that is still empty, is written back as it was read
+        and named in `kept`: saving while a drive is unplugged must not lose
+        what was on it."""
+        e = self.engine
+        files, ids, unsaved = [], {}, []
+
+        def file_ref(path):
+            rp = os.path.realpath(path)
+            if rp not in ids:
+                ids[rp] = "f%d" % len(files)
+                entry = {"id": ids[rp], "path": rp}
+                entry.update(session.fingerprint(rp))
+                entry["granted"] = not self._inside_roots_only(rp)
+                files.append(entry)
+            return ids[rp]
+
+        def view_of(kind, i, name, frames):
+            v = (views or {}).get("%s:%d" % (kind, i))
+            if not isinstance(v, dict) or v.get("sig") != "%s|%d" % (name, frames):
+                return None
+            try:
+                return {"vs": float(v["vs"]), "ve": float(v["ve"])}
+            except (KeyError, TypeError, ValueError):
+                return None
+
+        tracks = []
+        for t in e.tracks:
+            if t.src is None:
+                continue
+            if not t.path or not os.path.isfile(t.path):
+                unsaved.append("track %d (%s) has no file on disk"
+                               % (t.index + 1, t.name or "unnamed"))
+                continue
+            tracks.append({
+                "slot": t.index, "file": file_ref(t.path), "name": t.name,
+                "frames": int(t.frames),
+                "loop": [int(t.loop_start), int(t.loop_end)],
+                "gain": round(float(t.gain), 4), "pan": round(float(t.pan), 4),
+                "speed": round(float(t.speed), 4), "reverse": bool(t.reverse),
+                "mode": t.mode, "mute": bool(t.mute), "solo": bool(t.solo),
+                "view": view_of("track", t.index, t.name, t.frames)})
+        keys = []
+        for i, p in enumerate(e.pads):
+            if not p.loaded:
+                continue
+            if not p.path or not os.path.isfile(p.path):
+                unsaved.append("key %s (%s) has no file on disk"
+                               % (KEY_CAPS[i], p.name or "unnamed"))
+                continue
+            keys.append({
+                "slot": i, "file": file_ref(p.path), "name": p.name,
+                "frames": int(p.frames), "source": p.source,
+                "loop": [int(p.loop_start), int(p.loop_end)], "mode": p.mode,
+                "gain": round(float(p.gain), 4), "pan": round(float(p.pan), 4),
+                "speed": round(float(p.speed), 4), "reverse": bool(p.reverse),
+                "quantize": bool(p.quantize), "label": p.label,
+                "view": view_of("key", i, p.name, p.frames)})
+        kept, kept_ids = [], {}
+        for slot, k in sorted(self._kept.items(),
+                              key=lambda kv: (kv[0][0] != "t", int(kv[0].split(":")[1]))):
+            kind, i = slot.split(":")[0], int(slot.split(":")[1])
+            if (e.tracks[i].src is not None) if kind == "track" else e.pads[i].loaded:
+                continue
+            f = k["file"]
+            # its own entry with the fingerprint it was saved with, never merged
+            # into a live file of the same path whose fingerprint may be why it failed
+            sig = repr((f["path"], f.get("size"), f.get("edges_sha256"), f["granted"]))
+            if sig not in kept_ids:
+                kept_ids[sig] = "f%d" % len(files)
+                files.append(dict(f, id=kept_ids[sig]))
+            (tracks if kind == "track" else keys).append(
+                dict(k["row"], slot=i, file=kept_ids[sig]))
+            kept.append("%s (%s)" % ("track %d" % (i + 1) if kind == "track"
+                                     else "key %s" % KEY_CAPS[i],
+                                     os.path.basename(f["path"])))
+        tracks.sort(key=lambda row: row["slot"])
+        keys.sort(key=lambda row: row["slot"])
+        granted = [f for f in files if f["granted"]]
+        signed = ""
+        if granted:
+            signed = session.sign_grants(session.install_key(self.session_key_path), granted)
+        doc = {session.KIND: session.VERSION,
+               "saved": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+               "engine": {"samplerate": e.sr, "bpm": round(float(e.transport.bpm), 4),
+                          "quantum": int(e.transport.quantum_i),
+                          "master_gain": round(float(e.master_gain), 4)},
+               "files": files, "tracks": tracks, "keys": keys,
+               "grants": {"signed": signed}}
+        fname = os.path.basename(str(name)) if name else session.default_name()
+        if not fname.endswith(".json"):
+            fname += ".json"
+        path = os.path.join(self.sessions_dir, fname)
+        session.write(doc, path)
+        return path, doc, unsaved, kept
+
+    def _session_load_async(self, msg):
+        name = os.path.basename(str(msg.get("name", "")))
+        self.session.update(name=name, state="loading", error="")
+        threading.Thread(target=self._session_load_thread,
+                         args=(os.path.join(self.sessions_dir, name),),
+                         daemon=True).start()
+
+    def _session_load_thread(self, path):
+        try:
+            result = self.load_session(path, analyse=False)
+        except Exception as x:                       # never left reading "loading"
+            msg = "%s did not load — %s." % (os.path.basename(path), x)
+            self.session.update(state="failed", error=msg)
+            result = {"name": os.path.basename(path), "state": "failed", "error": msg,
+                      "missing": {}, "views": {}, "_analyse": []}
+        todo = result.pop("_analyse", [])
+        self.hub.text(dict(result, op="session.loaded"))
+        self._analyse(todo)
+
+    def load_session(self, path, analyse=True):
+        """Put a saved set back. Synchronous; call it off the audio thread.
+
+        Every refusal happens before the engine is touched. Read and
+        version-check the file; validate every file it names on disk, and
+        every grant; decode what survives; add up what the set will hold
+        against the memory ceiling. Only then are the current tracks and keys
+        cleared and the session's posted — so a session that cannot fit, or
+        cannot be read, leaves the set you had exactly as it was."""
+        name = os.path.basename(path)
+        MiB = 1048576
+
+        def failed(msg):
+            # the set on deck is untouched, and so are the marks on its empty slots
+            self.session.update(name=name, state="failed", error=msg)
+            return {"name": name, "state": "failed", "error": msg,
+                    "missing": {}, "views": {}, "_analyse": []}
+
+        try:
+            doc = session.read(path)
+        except session.SessionError as x:
+            return failed(str(x))
+        e = self.engine
+
+        # Someone will hand-edit this file. Every value's type is checked here,
+        # so nothing after the current set is cleared can stop a load halfway.
+        def rows_of(key):
+            v = doc.get(key)
+            return [r for r in v if isinstance(r, dict)] if isinstance(v, list) else []
+
+        def num(row, key, default, lo, hi):
+            try:
+                v = float(row.get(key, default))
+            except (TypeError, ValueError):
+                return default
+            return max(lo, min(hi, v)) if math.isfinite(v) else default
+
+        files = {f["id"]: f for f in rows_of("files")
+                 if isinstance(f.get("id"), str) and isinstance(f.get("path"), str)}
+        granted = [f for f in files.values() if f.get("granted")]
+        grants = doc.get("grants")
+        grants_ok = bool(granted) and session.grants_verify(
+            session.install_key(self.session_key_path), granted,
+            grants.get("signed") if isinstance(grants, dict) else None)
+
+        why = {}
+        for fid, f in files.items():
+            reason = session.check_file(f)
+            if reason is None and not self._inside_roots_only(f["path"]) \
+                    and not (f.get("granted") and grants_ok):
+                reason = ("is outside the folders this run may read, and the "
+                          "session's grant for it does not check out — pick it "
+                          "again with the dialog")
+            why[fid] = reason
+        decoded = {}
+        for fid, reason in why.items():
+            if reason is None:
+                try:
+                    decoded[fid] = decode(files[fid]["path"])
+                except Exception as x:              # DecodeError, or a file libsndfile chokes on
+                    why[fid] = "could not be decoded — %s" % x
+
+        variants = {}
+
+        def buf(fid, mode):
+            if (fid, mode) not in variants:
+                src, sr = decoded[fid]
+                variants[(fid, mode)] = src if mode == "STEREO" else \
+                    dsp.center_extract(src, sr, mode.lower())
+            return variants[(fid, mode)]
+
+        def slot_of(row, n):
+            try:
+                i = int(row.get("slot", -1))
+            except (TypeError, ValueError):
+                return -1
+            return i if 0 <= i < n else -1
+
+        def region(row, frames):
+            try:
+                ls, le = int(row["loop"][0]), int(row["loop"][1])
+            except (KeyError, IndexError, TypeError, ValueError):
+                return 0, frames
+            return max(0, min(ls, frames)), max(0, min(le, frames))
+
+        missing, kept, tracks, keys, seen = {}, {}, [], [], set()
+
+        def usable(kind, row, n):
+            """-> (slot, file id) to load, or None. A row that cannot load leaves
+            a missing mark and, when it names a file, the row itself, kept for
+            the next save. A grant goes back into a save only if this machine's
+            signature over it checked out: re-signing one that did not would
+            turn a hand-edited path into a trusted one."""
+            i = slot_of(row, n)
+            if i < 0 or (kind, i) in seen:
+                return None
+            seen.add((kind, i))
+            fid = row.get("file")
+            f = files.get(fid) if isinstance(fid, str) else None
+            reason = "is not in the session's file list" if f is None else why[fid]
+            if reason is None:
+                return i, fid
+            slot = "%s:%d" % (kind, i)
+            missing[slot] = {"name": os.path.basename(f["path"]) if f
+                             else str(row.get("name") or ""), "reason": reason}
+            if f:
+                entry = {k: f[k] for k in ("path", "size", "mtime_ns", "edges_sha256") if k in f}
+                entry["granted"] = bool(f.get("granted")) and grants_ok
+                kept[slot] = {"row": dict(row), "file": entry}
+            return None
+
+        for row in rows_of("tracks"):
+            got = usable("track", row, len(e.tracks))
+            if got:
+                i, fid = got
+                mode = row.get("mode") if row.get("mode") in MODES else "STEREO"
+                tracks.append((i, row, fid, buf(fid, "STEREO"),
+                               buf(fid, mode) if mode != "STEREO" else None, mode))
+        for row in rows_of("keys"):
+            got = usable("key", row, len(e.pads))
+            if got:
+                i, fid = got
+                source = row.get("source") if row.get("source") in MODES else "STEREO"
+                keys.append((i, row, fid, buf(fid, source), source))
+
+        if e.memory_limit > 0:
+            by_tracks = {}
+            for (_, _, _, src, var, _) in tracks:
+                by_tracks[id(src)] = src.nbytes
+                if var is not None:
+                    by_tracks[id(var)] = var.nbytes
+            total = dict(by_tracks)
+            extra = []
+            for (i, _, fid, b, _) in keys:
+                if id(b) not in total:
+                    extra.append((KEY_CAPS[i], os.path.basename(files[fid]["path"]), b.nbytes))
+                total[id(b)] = b.nbytes
+            need = sum(total.values())
+            if need > e.memory_limit:
+                if extra:
+                    return failed(
+                        "Nothing was loaded: this session holds %d MB of audio and "
+                        "the ceiling is %d MB. These keys hold files no track in it "
+                        "shows: %s. Clear them from the session, or restart with "
+                        "--memory-mb." % (need // MiB, e.memory_limit // MiB,
+                                          ", ".join("key %s (%s, %d MB)" % (c, n, b // MiB)
+                                                    for c, n, b in extra)))
+                return failed(
+                    "Nothing was loaded: this session's tracks alone hold %d MB of "
+                    "audio and the ceiling is %d MB. Restart with --memory-mb."
+                    % (sum(by_tracks.values()) // MiB, e.memory_limit // MiB))
+
+        # Past every refusal. Now the current set goes, and the session arrives.
+        e.post("transport.stop")
+        for i in range(len(e.tracks)):
+            e.post("track.clear", i=i)
+        for i in range(len(e.pads)):
+            e.post("pad.clear", i=i)
+        self.peaks.clear()
+        self.pad_peaks.clear()
+        self.meta.clear()
+        todo = []
+        for (i, row, fid, src, var, mode) in tracks:
+            f, sr = files[fid], decoded[fid][1]
+            nm = os.path.basename(f["path"])
+            ls, le = region(row, src.shape[0])
+            e.post("track.load", i=i, buf=src, sr=sr, name=nm, path=f["path"],
+                   bpm=0.0, conf=0.0, slices=np.zeros(0, dtype=np.int64),
+                   analysing=True)
+            if var is not None:
+                e.post("track.variant", i=i, mode=mode, buf=var)
+            e.post("track.loop", i=i, ls=ls, le=le)
+            e.post("track.gain", i=i, v=num(row, "gain", 0.65, 0.0, 1.4))
+            e.post("track.pan", i=i, v=num(row, "pan", 0.0, -1.0, 1.0))
+            e.post("track.speed", i=i, v=num(row, "speed", 1.0, 0.25, 4.0))
+            e.post("track.rev", i=i, v=bool(row.get("reverse", False)))
+            e.post("track.mute", i=i, v=bool(row.get("mute", False)))
+            e.post("track.solo", i=i, v=bool(row.get("solo", False)))
+            if not self._inside_roots_only(f["path"]):
+                self._grant(f["path"])
+            self.meta[i] = {"frames": src.shape[0], "sr": sr, "channels": src.shape[1],
+                            "name": nm, "stage": "playable", "error": ""}
+            pk = dsp.peaks(var if var is not None else src, 2048)
+            self.peaks[i] = pk
+            self.hub.peaks(i, pk)
+            todo.append((i, src, sr))
+        for (i, row, fid, b, source) in keys:
+            f, sr = files[fid], decoded[fid][1]
+            ls, le = region(row, b.shape[0])
+            e.post("pad.load", i=i, buf=b, sr=sr, name=os.path.basename(f["path"]),
+                   path=f["path"], ls=ls, le=le, source=source,
+                   label=str(row.get("label") or ""))
+            e.post("pad.assign", i=i,               # the engine sets these as given
+                   mode=row.get("mode") if row.get("mode") in KEY_MODES else ONESHOT,
+                   gain=num(row, "gain", 1.0, 0.0, 1.4), pan=num(row, "pan", 0.0, -1.0, 1.0),
+                   speed=num(row, "speed", 1.0, 0.25, 4.0),
+                   quantize=bool(row.get("quantize", False)),
+                   reverse=bool(row.get("reverse", False)))
+            if not self._inside_roots_only(f["path"]):
+                self._grant(f["path"])
+            pk = dsp.peaks(b, 2048)
+            self.pad_peaks[i] = pk
+            self.hub.pad_peaks(i, pk)
+        eng = doc.get("engine") if isinstance(doc.get("engine"), dict) else {}
+        bpm = num(eng, "bpm", 0.0, 0.0, 1000.0)
+        if bpm > 0:
+            e.post("transport.bpm", v=bpm)
+        quantum = num(eng, "quantum", -1.0, 0.0, 64.0)
+        if quantum >= 0:
+            e.post("transport.quantum", v=int(quantum))
+        if "master_gain" in eng:
+            e.post("master.gain", v=num(eng, "master_gain", float(e.master_gain), 0.0, 1.2))
+
+        views = {}
+        loaded = {("track", i): src.shape[0] for (i, _, _, src, _, _) in tracks}
+        loaded.update({("key", i): b.shape[0] for (i, _, _, b, _) in keys})
+        names = {("track", i): os.path.basename(files[fid]["path"]) for (i, _, fid, _, _, _) in tracks}
+        names.update({("key", i): os.path.basename(files[fid]["path"]) for (i, _, fid, _, _) in keys})
+        for kind, rows in (("track", rows_of("tracks")), ("key", rows_of("keys"))):
+            for row in rows:
+                i = slot_of(row, len(e.tracks) if kind == "track" else len(e.pads))
+                v = row.get("view")
+                if (kind, i) not in loaded or not isinstance(v, dict):
+                    continue
+                try:
+                    vs, ve = float(v["vs"]), float(v["ve"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if math.isfinite(vs) and math.isfinite(ve):   # NaN is not JSON a browser reads
+                    views["%s:%d" % (kind, i)] = {
+                        "sig": "%s|%d" % (names[(kind, i)], loaded[(kind, i)]),
+                        "vs": vs, "ve": ve}
+        self._kept = kept
+        self.session.update(name=name, state="loaded", error="", missing=missing)
+        result = {"name": name, "state": "loaded", "error": "", "missing": missing,
+                  "views": views, "_analyse": todo}
+        if analyse:
+            self._analyse(result.pop("_analyse"))
+        return result
+
+    def _analyse(self, todo):
+        """Tempo and slices after the set is already playable — display only."""
+        for (i, src, sr) in todo:
+            try:
+                bpm, conf = dsp.estimate_bpm(src, sr)
+                pts, method = dsp.slice_points(src, sr, 16)
+            except Exception as x:
+                self.meta.setdefault(i, {})["error"] = "analysis failed: %s" % x
+                continue
+            self.engine.post("track.analysis", i=i, bpm=bpm, conf=conf, slices=pts)
+            self.meta.setdefault(i, {}).update(
+                bpm=bpm, conf=conf, slices=pts.tolist(), slice_method=method,
+                stage="analysed")
+
     # -- convenience -------------------------------------------------------
     def load_kit(self, d):
         d = os.path.realpath(os.path.expanduser(d))
@@ -310,6 +751,7 @@ class App:
         files = [os.path.join(d, n) for n in sorted(os.listdir(d))
                  if os.path.splitext(n)[1].lower() in AUDIO_EXT]
         for i, p in enumerate(files[:len(self.engine.tracks)]):
+            self._forget_missing("track:%d" % i)
             self.loader.load_async(i, p, 16)
         return files
 

@@ -23,6 +23,9 @@ def main(argv=None):
     ap.add_argument("--tracks", type=int, default=8)
     ap.add_argument("--voices", type=int, default=16)
     ap.add_argument("--kit", default=None, help="folder to load into tracks")
+    ap.add_argument("--sessions", default=None,
+                    help="folder sessions are saved to and opened from "
+                         "(default ~/.loopengine/sessions)")
     ap.add_argument("--root", action="append", default=None,
                     help="folder the file browser may read (repeatable)")
     ap.add_argument("--empty", action="store_true",
@@ -91,7 +94,7 @@ def main(argv=None):
         return 1
 
     roots = args.root or [HERE, os.path.expanduser("~")]
-    app = App(engine, roots=roots,
+    app = App(engine, roots=roots, sessions_dir=args.sessions,
               inbox=os.path.join(HERE, ".inbox")).start_pump()
 
     try:

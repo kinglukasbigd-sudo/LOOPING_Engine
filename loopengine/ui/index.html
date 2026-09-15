@@ -60,6 +60,15 @@
       <div id="pending" class="pending-line">nothing queued</div>
     </div>
 
+    <div class="rail-block">
+      <div class="legend" data-help="session">SESSION</div>
+      <div class="btn-row">
+        <button class="btn" data-act="save">SAVE</button>
+        <button class="btn" data-act="open">OPEN</button>
+      </div>
+      <div id="session-line" class="pending-line">nothing saved yet</div>
+    </div>
+
     <div class="rail-block grow">
       <div class="legend" data-help="master">MASTER</div>
       <div class="val-row">
@@ -136,7 +145,7 @@
 
     <div id="browser" class="browser" aria-hidden="true">
       <div class="panel-bar">
-        <span class="panel-title">LOAD → TRACK <b id="b-target">1</b></span>
+        <span class="panel-title" id="b-title">LOAD → TRACK <b id="b-target">1</b></span>
         <span class="legend" id="b-dir">/</span>
         <span class="spacer"></span>
         <button class="btn" data-act="b-up">UP</button>
@@ -154,7 +163,7 @@
       <span class="legend inline">FOCUS</span>
     </div>
     <dl id="i-rows" class="rows"></dl>
-    <div id="i-error" class="err" hidden></div>
+    <div class="note-slot"><div id="i-error" class="err" hidden></div></div>
     <div class="legend keys-head">KEYS — LEFT HAND</div>
     <div class="keys">
       <div class="krow"><kbd class="w">SHIFT</kbd><span>hold — pads become tracks</span></div>

@@ -110,11 +110,12 @@ class Pad:
 
     __slots__ = ("track", "slice", "mode", "gain", "pan", "speed", "quantize",
                  "label", "buf", "sr", "channels", "frames", "loop_start",
-                 "loop_end", "name", "path", "reverse")
+                 "loop_end", "name", "path", "reverse", "source")
 
     def __init__(self):
         self.track = -1
         self.slice = -1
+        self.source = "STEREO"      # the track's source mode when taken
         self.mode = ONESHOT
         self.gain = 1.0
         self.pan = 0.0
@@ -155,6 +156,7 @@ class Pad:
         self.label = ""
         self.track = -1
         self.slice = -1
+        self.source = "STEREO"
 
     def set_loop(self, ls, le):
         """Same guards as a track: a key's region is edited the same way."""
@@ -177,6 +179,7 @@ class Pad:
                 "name": self.name, "sr": self.sr, "ch": self.channels,
                 "frames": self.frames, "ls": self.loop_start,
                 "le": self.loop_end, "rev": self.reverse,
+                "source": self.source,
                 "speed": round(self.speed, 4),
                 "mb": round((self.buf.nbytes / 1048576.0) if self.buf is not None else 0.0, 1)}
 
@@ -634,7 +637,8 @@ class Engine:
         elif op == "track.rev":
             t = self._t(kw)
             if t:
-                t.reverse = not t.reverse
+                # a toggle from a key press; a session sets it outright
+                t.reverse = bool(kw["v"]) if "v" in kw else not t.reverse
         elif op == "track.mute":
             t = self._t(kw)
             if t:
@@ -744,6 +748,24 @@ class Engine:
                 p.assign(t.buf, t.sr, t.name, t.path, ls, le,
                          track=t.index, slice_i=int(kw.get("slice", -1)))
                 p.label = kw.get("label") or "%s" % t.name.split(".")[0][:12]
+                p.source = t.mode        # a CTR or SIDE key holds that variant
+                self.last_error = ""
+        elif op == "pad.load":
+            # A key's own audio, put back by a session. Not taken from a track:
+            # the track it came from may hold something else by now.
+            p = self.pads[int(kw["i"]) % len(self.pads)]
+            buf = kw["buf"]
+            if self.would_exceed(buf):
+                self.last_error = (
+                    "No room to put %s back on a key: %d MB of audio is held "
+                    "against a %d MB ceiling." % (kw.get("name", "that file"),
+                                                  self.audio_bytes() // 1048576,
+                                                  self.memory_limit // 1048576))
+            else:
+                p.assign(buf, int(kw["sr"]), kw.get("name", ""), kw.get("path", ""),
+                         int(kw.get("ls", 0)), int(kw.get("le", buf.shape[0])))
+                p.source = kw.get("source", "STEREO")
+                p.label = kw.get("label") or kw.get("name", "").split(".")[0][:12]
                 self.last_error = ""
         elif op == "pad.loop":
             p = self.pads[int(kw["i"]) % len(self.pads)]

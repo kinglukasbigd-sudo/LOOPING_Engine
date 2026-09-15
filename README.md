@@ -110,6 +110,43 @@ This is channel arithmetic, not source separation. It works on a mix where the
 vocal is dead centre and falls apart when it is not. Both variants are computed
 once on a worker thread and swapped in as a pointer.
 
+## Sessions
+
+SAVE, in the rail, writes the whole set to a file: every track's file, loop
+region, gain, pan, speed, reverse, mute, solo and source mode; every key's own
+file, source mode, region and settings; tempo, quantum and master level; and
+the waveform panel's zoom for each track and each key. OPEN lists the saved
+sets where the pad grid is, and puts one back. A loaded set starts stopped.
+
+Sessions are plain JSON in `~/.loopengine/sessions/` (`--sessions DIR` to choose
+another folder), versioned from the first release, so a file from a newer build,
+or one a hand edit has left unreadable, is refused with the reason rather than
+half-read. A value of the wrong type — a gain typed as a word — falls back to its
+default instead of stopping the load halfway.
+
+A session never simply trusts what it says. On load every file it names is
+checked again — still there, still readable, still the same size and the same
+bytes at both ends — and a track or key whose file fails is left empty and
+named, in its row or on its key, with the reason in the inspector. Files outside
+`--root` were readable only because the file dialog granted them for that run.
+The session keeps those grants, signed with a key made once for this
+installation (`~/.loopengine/session.key`, readable only by you), so a granted
+path that has been edited — even to point at an identical copy — or a session
+from another machine is refused for those files and asks for the dialog again.
+Editing a gain or a region by hand is fine.
+
+Saving a set with missing slots keeps them. The track or key is written back
+exactly as it was read, with the fingerprint it was saved with, so a session
+saved while a drive is unplugged still loads those files once the drive is back.
+A kept grant goes back signed only if its signature checked out when it was
+read; one that did not is written back unsigned, and stays refused.
+
+A session is added up against the memory ceiling before anything is touched. If
+it will not fit, nothing loads, the set you had stays exactly as it was, and the
+error names the keys holding files no track in the session shows. Audio that
+only ever existed in memory has no file to point at; saving names it rather than
+dropping it quietly.
+
 ## Layout
 
 ```
@@ -119,6 +156,7 @@ loopengine/
   voice.py       pad voices + the pool
   transport.py   sample-counted clock and quantiser
   engine.py      the callback, the command queue, telemetry
+  session.py     sets saved and put back; files and grants re-validated
   loader.py      decode (libsndfile, then ffmpeg) + analysis off-thread
   server.py      stdlib HTTP + a hand-rolled WebSocket, no framework
   app.py         wiring and the command router
@@ -147,7 +185,7 @@ PYTHONPATH=.pylibs python3 -m tests     # with the vendored dependencies
 python3 -m tests                        # with installed ones
 ```
 
-263 checks in 12 files, about 15 seconds on the machine they were written on.
+295 checks in 13 files, about 15 seconds on the machine they were written on.
 Each file runs in its own process and prints PASS, FAIL or SKIP for every check,
 and the summary names every SKIP, so a skipped check cannot quietly become a
 permanent one. No sound card is needed — everything runs through the offline
