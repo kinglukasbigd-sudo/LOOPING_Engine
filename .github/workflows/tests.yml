@@ -1,6 +1,7 @@
 # Every check on every push. No sound card and no display: the engine runs
-# through its offline path, and the one check that needs a file-dialog program
-# prints SKIP with its reason, which `python -m tests` lists by name at the end.
+# through its offline path, the panel's gestures are pressed in headless
+# chromium, and the one check that needs a file-dialog program prints SKIP with
+# its reason, which `python -m tests` lists by name at the end.
 name: tests
 
 on:
@@ -34,6 +35,16 @@ jobs:
 
       - name: Install the pinned dependencies
         run: python -m pip install -r requirements.txt
+
+      # tests/test_panel.py drives the panel in a real browser. --with-deps
+      # brings the system libraries chromium needs on a bare runner; without
+      # this step those checks would SKIP rather than run.
+      - name: Install the browser the panel tests drive
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.pylibs/ms-playwright
+        run: |
+          python -m pip install -r requirements-dev.txt
+          python -m playwright install --with-deps chromium
 
       - name: Run every check
         run: python -m tests

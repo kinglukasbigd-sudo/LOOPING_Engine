@@ -248,7 +248,9 @@ PYTHONPATH=.pylibs python3 -m tests     # with the vendored dependencies
 python3 -m tests                        # with installed ones
 ```
 
-356 checks in 15 files, about 22 seconds on the machine they were written on.
+389 checks in 16 files, about 40 seconds on the machine they were written on —
+half of that the browser file, which is the only one that starts a server and
+drives a real page.
 Each file runs in its own process and prints PASS, FAIL or SKIP for every check,
 and the summary names every SKIP, so a skipped check cannot quietly become a
 permanent one. No sound card is needed — everything runs through the offline
@@ -262,6 +264,23 @@ CI runs the same command on every push: GitHub Actions, ubuntu-24.04,
 Python 3.12.3, node 22, the pinned requirements, no display and no sound
 card. There the one check that needs a desktop — whether a file-dialog
 program exists — prints SKIP with its reason, and the summary names it.
+
+The panel's own gestures are tested in a browser — headless, against a panel
+server on the null backend, so no sound card and no display. `test_panel.py`
+presses ASSIGN and a key cap, drags a loop point, arms MAP and calls it off with
+Esc, clears a key, loads a file onto a track, and asserts what the key slots
+hold afterwards. It runs the stillness probe as a check, and hooks
+`WebSocket.send` to prove the panel paints its own feedback before the socket
+carries the press. Every bug that reached Ivan across three work orders was a
+gesture the Python suite could not send: a mode button that replaced sixteen
+keys, a key drag that snapped back, a title that shifted. Those checks need
+chromium, once:
+
+```bash
+pip install playwright && PYTHONPATH=.pylibs python3 -m playwright install chromium
+```
+
+Without it they print SKIP with that reason rather than passing untested.
 
 ```bash
 python -m loopengine.offline kits/testkit-124 render.wav 8

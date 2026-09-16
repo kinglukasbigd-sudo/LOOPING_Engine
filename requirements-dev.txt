@@ -1,0 +1,10 @@
+# Test-only. The engine and the panel need none of this to run.
+#
+# tests/test_panel.py presses the panel's own gestures in a real browser,
+# because every bug that reached a player in work orders 6 to 8 was a gesture
+# no Python test could send. Without this installed those checks print SKIP
+# with the reason rather than passing untested:
+#
+#     pip install -r requirements-dev.txt
+#     python -m playwright install chromium
+playwright==1.63.0
