@@ -43,6 +43,7 @@ function codeOf(e) {
 }
 
 let ws = null, S = null, focus = 0, padMode = null;
+let mapArmed = false, assignConfirm = -1;   // the two gestures that ask first
 /* Help is a MODE, not a layer. Nothing floats over the grid; each cell that
    has room swaps its own label for an explanation, in its own box. The short
    form has to fit the box it lands in — every target is a reserved cell with
@@ -281,17 +282,65 @@ function sendRegion(ls, le) {
   else send({ op: 'track.loop', i: focus, ls, le });
 }
 
+/* A key holds hand-tuned audio until its owner says otherwise, so the two
+   gestures that can destroy one ask first, in place: the control arms, the note
+   says exactly what goes, and the same press again inside the window does it.
+   Nothing floats, and anything else calls it off. */
+const CONFIRM_MS = 4000;
+function cancelMap() {
+  clearTimeout(cancelMap._t);
+  if (!mapArmed) return;
+  mapArmed = false;
+  const b = $('[data-act="mappads"]');
+  if (b) b.setAttribute('aria-pressed', false);
+  if (localError.startsWith('MAP replaces')) localError = '';
+}
+function cancelAssign() {
+  clearTimeout(cancelAssign._t);
+  if (assignConfirm < 0) return;
+  assignConfirm = -1;
+  if (localError.startsWith('Key ')) localError = '';
+}
+
+/* ONE / GATE / LOOP say how a key behaves, never what audio it holds. Choosing
+   one used to send pads.map, which replaced all 16 keys with the focused
+   track's slices — work order 8's bug — and it fired even when the mode chosen
+   was the one already in force. With a key being edited this sets that key's
+   mode; otherwise it is the mode a key takes when you assign it. */
+function setPadMode(mode) {
+  const editing = editKeys && focusKind === 'key' && S && S.pads[focusKey]
+    && S.pads[focusKey].loaded ? focusKey : -1;
+  const now = editing >= 0 ? S.pads[editing].mode : padMode;
+  padMode = mode;
+  $$('#pad-modes .seg-btn').forEach(b =>
+    b.setAttribute('aria-pressed', b.dataset.pmode === mode));    // paint first
+  if (mode === now) return;                                       // already there
+  if (editing >= 0) send({ op: 'pad.assign', i: editing, mode });
+}
+
 function assignToKey(k) {
   const t = S && S.tracks[focus];
   if (!t || !t.loaded) {
     localError = 'Nothing to assign — track ' + (focus + 1) + ' is empty.';
     return;
   }
+  const p = S.pads[k];
+  if (p && p.loaded && assignConfirm !== k) {
+    cancelAssign();
+    assignConfirm = k;
+    cancelAssign._t = setTimeout(cancelAssign, CONFIRM_MS);
+    localError = `Key ${PAD_CAPS[k] || k + 1} holds ${p.name}. Press it again to `
+               + 'replace it; leave it and it stays.';
+    return;                              // still armed: the next press decides
+  }
+  const replacing = !!(p && p.loaded);
+  cancelAssign();
   const [ls, le] = liveLoop(focus, Object.assign({}, t, { kind: 'track' }));
   const el = $$('#padgrid .pad')[k];
   if (el) el.classList.add('hit');            // paint first
   setTimeout(() => el && el.classList.remove('hit'), 160);
-  send({ op: 'pad.take', i: k, track: focus, ls, le });
+  send({ op: 'pad.take', i: k, track: focus, ls, le, replace: replacing });
+  send({ op: 'pad.assign', i: k, mode: padMode || 'ONE' });   // never a mode the panel has not read yet
   assignArmed = false;
   $('[data-act="assign"]').setAttribute('aria-pressed', false);
 }
@@ -873,8 +922,11 @@ function renderState() {
     const mapped = S.pads.find(p => p.track >= 0);
     padMode = mapped ? mapped.mode : 'ONE';
   }
+  /* The segment shows the key being edited, or the mode the next assign takes. */
+  const showMode = (editKeys && focusKind === 'key' && S.pads[focusKey]
+                    && S.pads[focusKey].loaded) ? S.pads[focusKey].mode : padMode;
   $$('#pad-modes .seg-btn').forEach(b =>
-    b.setAttribute('aria-pressed', b.dataset.pmode === padMode));
+    b.setAttribute('aria-pressed', b.dataset.pmode === showMode));
 
   renderInspector();
 }
@@ -1512,7 +1564,22 @@ const ACT = {
   },
   pick:    () => openPicker(true),
   unload:  () => send({ op: 'unload', i: focus }),
-  mappads: () => send({ op: 'pads.map', track: focus, mode: padMode }),
+  /* MAP replaces all 16 keys with this file's slices. With any key holding
+     audio it asks first; with all of them empty it just does it. */
+  mappads: () => {
+    const taken = S ? S.pads.filter(p => p.loaded).length : 0;
+    if (taken && !mapArmed) {
+      mapArmed = true;
+      $('[data-act="mappads"]').setAttribute('aria-pressed', true);   // paint first
+      localError = 'MAP replaces all 16 keys with this file\'s slices, and '
+                 + `${taken} ${taken === 1 ? 'key holds' : 'keys hold'} audio. `
+                 + 'Press MAP again to go ahead.';
+      cancelMap._t = setTimeout(cancelMap, CONFIRM_MS);
+      return;
+    }
+    cancelMap();
+    send({ op: 'pads.map', track: focus, mode: padMode, confirm: true });
+  },
   assign: () => {
     assignArmed = !assignArmed;
     $('[data-act="assign"]').setAttribute('aria-pressed', assignArmed);
@@ -1529,7 +1596,10 @@ const ACT = {
     applyHelp();
   },
   clearkey: () => {
-    if (focusKind !== 'key') { localError = 'No key is being edited.'; return; }
+    if (focusKind !== 'key') {
+      localError = 'No key is being edited. Press EDIT, then the key, then CLR.';
+      return;
+    }
     send({ op: 'pad.clear', i: focusKey });
   },
   'b-up':  () => browseTo($('#b-dir').dataset.up || ''),
@@ -1541,11 +1611,12 @@ document.addEventListener('mouseup', (e) => {
 });
 document.addEventListener('click', (e) => {
   const b = e.target.closest('[data-act]');
+  if (b && b.dataset.act !== 'mappads') cancelMap();   // anything else calls it off
   if (b && ACT[b.dataset.act]) ACT[b.dataset.act]();
   const m = e.target.closest('[data-mode]');
   if (m) send({ op: 'mode', i: focus, mode: m.dataset.mode });
   const pm = e.target.closest('[data-pmode]');
-  if (pm) { padMode = pm.dataset.pmode; send({ op: 'pads.map', track: focus, mode: padMode }); }
+  if (pm) setPadMode(pm.dataset.pmode);
 });
 $$('.head-stats .stat')[5].classList.add('clickable');
 $$('.head-stats .stat')[6].classList.add('clickable');
@@ -1582,6 +1653,7 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     if (e.ctrlKey || e.metaKey || assignArmed) return assignToKey(pi);
     if (editKeys) { focusKind = 'key'; focusKey = pi; paintKeyFocus(); return; }
+    cancelMap();                     // a key press is not a MAP confirmation
     down.add(code);
     triggerPad(pi);
     return;
@@ -1613,7 +1685,8 @@ window.addEventListener('keydown', (e) => {
       break;
     }
     case 'Escape':
-      if (helpMode) ACT.help();
+      if (mapArmed || assignConfirm >= 0) { cancelMap(); cancelAssign(); }
+      else if (helpMode) ACT.help();
       else if (browserOpen()) closeBrowser();
       else send({ op: 'panic' });
       break;

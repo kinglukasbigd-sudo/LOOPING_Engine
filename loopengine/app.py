@@ -28,6 +28,14 @@ KEY_CAPS = "1234QWERASDFZXCV"   # key slot -> the cap on the keyboard
 KEY_MODES = (ONESHOT, GATE, LOOP)
 
 
+def _finite(v, default=None):
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return default
+    return x if math.isfinite(x) else default
+
+
 class App:
     def __init__(self, engine, roots=None, inbox=".inbox", fps=30,
                  sessions_dir=None, session_key=None, recordings_dir=None):
@@ -272,17 +280,51 @@ class App:
             # the key's envelope is the source track's, captured now so it
             # survives that track being replaced
             t = int(msg.get("track", -1))
-            i = int(msg.get("i", 0))
+            i = int(msg.get("i", 0)) % len(self.engine.pads)
+            if self.engine.pads[i].loaded and not msg.get("replace"):
+                # Hand-tuned audio goes only when its owner says so. The panel
+                # asks and its second press carries `replace`.
+                self.engine.last_error = (
+                    "Key %s holds %s. Press it again to replace it, or clear it first."
+                    % (KEY_CAPS[i], self.engine.pads[i].name or "audio"))
+                return
             self._forget_missing("key:%d" % i)
             if t in self.peaks:
                 self.pad_peaks[i] = self.peaks[t]
                 self.hub.pad_peaks(i, self.peaks[t])
             self.engine.post("pad.take", **{k: v for k, v in msg.items() if k != "op"})
+        elif op == "pad.assign":
+            # Settings only, and only values the engine can use: it applies
+            # these as given, so a null mode from a panel that has not painted
+            # yet would stick to the key and travel into its session.
+            kw = {"i": int(msg.get("i", 0)) % len(self.engine.pads)}
+            if msg.get("mode") in KEY_MODES:
+                kw["mode"] = msg["mode"]
+            for f, lo, hi in (("gain", 0.0, 1.4), ("pan", -1.0, 1.0), ("speed", 0.25, 4.0)):
+                v = _finite(msg.get(f)) if f in msg else None
+                if v is not None:
+                    kw[f] = max(lo, min(hi, v))
+            for f in ("quantize", "reverse"):
+                if f in msg:
+                    kw[f] = bool(msg[f])
+            if "label" in msg:
+                kw["label"] = str(msg["label"])[:32]
+            self.engine.post("pad.assign", **kw)
         elif op == "pad.clear":
             self.pad_peaks.pop(int(msg.get("i", 0)), None)
             self._forget_missing("key:%d" % int(msg.get("i", 0)))
             self.engine.post("pad.clear", **{k: v for k, v in msg.items() if k != "op"})
         elif op == "pads.map":
+            # MAP replaces every key with a file's slices — up to 16 hand-tuned
+            # keys in one press. The panel asks first and its second press
+            # carries `confirm`; this refuses anything else, whatever sent it.
+            taken = [KEY_CAPS[i] for i, p in enumerate(self.engine.pads) if p.loaded]
+            if taken and not msg.get("confirm"):
+                self.engine.last_error = (
+                    "MAP would replace %d assigned key%s (%s) with this file's "
+                    "slices. Press MAP again to go ahead."
+                    % (len(taken), "" if len(taken) == 1 else "s", ", ".join(taken)))
+                return
             self.map_pads(int(msg["track"]), msg.get("mode", "ONE"))
         elif op == "tap":
             self.engine.transport.tap(time.monotonic())
@@ -823,6 +865,18 @@ class App:
             self.loader.load_async(i, p, 16)
         return files
 
+    def fill_keys_from_slices(self, track_i, mode="ONE"):
+        """The demo kit's convenience at launch — and only then.
+
+        It fills the keys from a track's slices when no key holds anything. A
+        session restored into this run, or any key assigned before it, must
+        never be wiped by something that runs at startup. -> did it fill?
+        """
+        if any(p.loaded for p in self.engine.pads):
+            return False
+        self.map_pads(track_i, mode)
+        return True
+
     def map_pads(self, track_i, mode="ONE"):
         """Fill the keys from a track's slices — each one SNAPSHOTTING the
         audio, so the keys survive the track being replaced."""
@@ -836,7 +890,7 @@ class App:
                 le = int(pts[j + 1]) if j + 1 < pts.size else t.frames
             else:
                 ls, le = t.loop_start, t.loop_end
-            self.handle({"op": "pad.take", "i": k, "track": track_i,
+            self.handle({"op": "pad.take", "i": k, "track": track_i, "replace": True,
                          "ls": ls, "le": le, "slice": k % n,
                          "label": "%s/%02d" % (t.name.split(".")[0][:9], k + 1)})
             self.engine.post("pad.assign", i=k, mode=mode,

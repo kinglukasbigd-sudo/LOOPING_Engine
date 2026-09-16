@@ -85,6 +85,22 @@ once a device is there — you just can't hear it.
 SHIFT is the FUNC key: hold it and the pad grid becomes the track grid. Double
 click a strip to launch it.
 
+**A key holds its own sound.** ASSIGN, then the key cap, puts the focused
+track's file and its current loop onto that key; Ctrl or Cmd with the cap does
+the same without arming first. The key keeps that audio when the track moves
+on — loading another file onto a track never touches a key. A key that already
+holds something asks before it goes: the first press says what is in it, and
+the same press again replaces it. EDIT puts the waveform panel on a key, so its
+region is dragged exactly like a track's, and CLR empties the key being edited
+and lets go of its audio. A cleared key stays cleared in a session.
+
+ONE, GATE and LOOP say how a key behaves — one shot, held, or looping. They are
+a mode and nothing else: with a key being edited they set that key's mode,
+otherwise they set the mode the next assign takes. MAP is the one control that
+replaces every key at once, filling all 16 from the focused file's slices; when
+any key holds audio it asks first, and a second press within four seconds does
+it.
+
 On the waveform: drag a handle to move that loop point, SHIFT-drag to draw a
 new loop, drag anywhere else to pan, scroll to zoom around the pointer, and
 double click to loop the whole file. Zooming changes nothing you hear and
@@ -223,7 +239,7 @@ PYTHONPATH=.pylibs python3 -m tests     # with the vendored dependencies
 python3 -m tests                        # with installed ones
 ```
 
-331 checks in 14 files, about 25 seconds on the machine they were written on.
+356 checks in 15 files, about 22 seconds on the machine they were written on.
 Each file runs in its own process and prints PASS, FAIL or SKIP for every check,
 and the summary names every SKIP, so a skipped check cannot quietly become a
 permanent one. No sound card is needed — everything runs through the offline
@@ -487,7 +503,7 @@ room would be silent.
 
 ## Traps
 
-Thirteen things that looked like they worked. Each cost real time, and each
+Fourteen things that looked like they worked. Each cost real time, and each
 produces a confident wrong answer rather than an error, which is why they are
 written down rather than left in a commit message.
 
@@ -618,6 +634,19 @@ while the server had already written the file; the file on disk, not the page,
 was the evidence. *When the panel looks stuck, check what the server did before
 believing the page — and a test that cannot show its tab has to call the render
 pass itself.*
+
+**A mode button that replaced sixteen keys.** Choosing ONE, GATE or LOOP in the
+pads bar sent `pads.map`, the op that fills every key from the focused track's
+slices. So a set built by assigning a bass loop to key 1, loading hi-hats onto
+that track, and then picking a key mode lost all sixteen keys to hat slices —
+and read, from the chair, as "loading a file wipes my keys". It fired even when
+the mode picked was the one already in force. The engine was never at fault:
+`track.load` touches no pad and a trigger consults only the key slot, which is
+why Task 19's test passed. It drove the engine API; the panel sent something
+else. *A control does one thing, and its name is that thing. Test through the
+messages the UI actually sends — `tests/test_panel_flow.py` now asserts that
+every op the panel can send is one the app routes, and that the single remap
+sender carries its confirmation.*
 
 ## The audio graph underneath
 

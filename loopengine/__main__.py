@@ -118,7 +118,7 @@ def main(argv=None):
         app.load_kit(kit)
         time.sleep(0.6)                       # let the analysers finish
         engine.post("transport.bpm", v=124.0)
-        app.map_pads(min(4, args.tracks - 1), "ONE")
+        app.fill_keys_from_slices(min(4, args.tracks - 1), "ONE")
 
     if args.measure_output and not args.offline:
         from . import loopback
