@@ -98,8 +98,8 @@ ONE, GATE and LOOP say how a key behaves — one shot, held, or looping. They ar
 a mode and nothing else: with a key being edited they set that key's mode,
 otherwise they set the mode the next assign takes. MAP is the one control that
 replaces every key at once, filling all 16 from the focused file's slices; when
-any key holds audio it asks first, and a second press within four seconds does
-it.
+any key holds audio it asks first, and a second press does it. Neither ask has a
+clock: an armed control waits, and Esc or any other press calls it off.
 
 On the waveform: drag a handle to move that loop point, SHIFT-drag to draw a
 new loop, drag anywhere else to pan, scroll to zoom around the pointer, and

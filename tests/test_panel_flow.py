@@ -121,9 +121,56 @@ def t_every_op_the_panel_sends_is_handled():
                      and not o.startswith(prefixes))
     check("every op the panel sends is one the app routes",
           not missing and len(ops) > 20, "%d ops, missing: %s" % (len(ops), missing or "none"))
+    check("neither confirmation runs on a clock: they wait for the press",
+          "CONFIRM_MS" not in src
+          and re.search(r"function cancelMap\(\)[\s\S]{0,300}?setTimeout", src) is None
+          and re.search(r"function cancelAssign\(\)[\s\S]{0,300}?setTimeout", src) is None)
     check("the panel asks for a remap in exactly one place, and it carries confirm",
           src.count("'pads.map'") == 1 and re.search(r"op: 'pads\.map'[^}]*confirm: true", src)
           is not None, "%d senders" % src.count("'pads.map'"))
+
+
+def t_the_segment_says_whose_mode_it_shows():
+    html = io.open(os.path.join(ROOT, "loopengine", "ui", "index.html"), encoding="utf-8").read()
+    css = io.open(os.path.join(ROOT, "loopengine", "ui", "app.css"), encoding="utf-8").read()
+    js = io.open(os.path.join(ROOT, "loopengine", "ui", "app.js"), encoding="utf-8").read()
+    check("the pads bar names whose mode the segment is showing, in a reserved box",
+          'id="pmode-for"' in html and "NEW KEYS" in html
+          and re.search(r"#pmode-for\s*\{[^}]*width: var\(--w-pmode\)", css) is not None)
+    check("and the panel never shows one subject while editing another",
+          "function padModeShown()" in js and js.count("padModeShown()") >= 3
+          and "'KEY ' + (PAD_CAPS[k]" in js)
+
+
+def t_each_key_keeps_its_own_mode():
+    d = base_dir()
+    try:
+        bass = tone(os.path.join(d, "music", "bass.wav"), 1.0, 110.0)
+        p = Panel(d)
+        p.load(0, bass)
+        p.send("pad.take", i=0, track=0, ls=0, le=20000)
+        p.send("pad.assign", i=0, mode="LOOP")
+        p.send("pad.take", i=1, track=0, ls=20000, le=40000)
+        p.send("pad.assign", i=1, mode="GATE")
+        check("two keys hold two different modes at once",
+              (p.e.pads[0].mode, p.e.pads[1].mode) == ("LOOP", "GATE"),
+              "%s %s" % (p.e.pads[0].mode, p.e.pads[1].mode))
+        p.send("session.save")
+        p.wait(lambda: any(m.get("op") == "session.saved" for m in p.sent))
+        name = [m for m in p.sent if m.get("op") == "session.saved"][-1]["name"]
+        r = Panel(d)
+        r.send("session.load", name=name)
+        r.wait(lambda: any(m.get("op") == "session.loaded" for m in r.sent))
+        r.settle(8)
+        check("and each comes back with its own mode after a restart",
+              (r.e.pads[0].mode, r.e.pads[1].mode) == ("LOOP", "GATE"),
+              "%s %s" % (r.e.pads[0].mode, r.e.pads[1].mode))
+        r.send("pad.assign", i=0, mode="ONE")
+        check("changing one key's mode leaves every other key alone",
+              r.e.pads[0].mode == "ONE" and r.e.pads[1].mode == "GATE"
+              and r.key(1)[:3] == ("bass.wav", 20000, 40000))
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
 
 
 def t_loading_a_file_cannot_touch_a_key():
@@ -294,6 +341,8 @@ def t_keys_survive_save_restart_load_and_a_later_file_load():
 
 if __name__ == "__main__":
     for fn in (t_every_op_the_panel_sends_is_handled,
+               t_the_segment_says_whose_mode_it_shows,
+               t_each_key_keeps_its_own_mode,
                t_loading_a_file_cannot_touch_a_key,
                t_a_mode_is_only_a_mode,
                t_map_asks_before_it_replaces_assigned_keys,

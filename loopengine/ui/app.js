@@ -68,6 +68,7 @@ const HELP = {
   msr:     ['MUTE SOLO REVERSE', 'Mute, solo, and play backwards. Reverse waits for the quantum.'],
   q:       ['WAITING',           'Shows what this track is waiting to do at the next boundary.'],
   pads:    ['KEYS',              'Each key holds its own sound and loop, and keeps them when you change the track.'],
+  pmode:   ['WHOSE MODE',        'What ONE / GATE / LOOP act on: the key being edited, or the mode a key takes when you assign it.'],
   session: ['SESSION',           'SAVE writes every track, key, region and zoom to a file. OPEN puts a set back.'],
   record:  ['RECORD',            'REC arms a take of the master output. RUN starts it, or it starts at once if the clock runs. REC again writes the file.'],
 };
@@ -284,11 +285,14 @@ function sendRegion(ls, le) {
 
 /* A key holds hand-tuned audio until its owner says otherwise, so the two
    gestures that can destroy one ask first, in place: the control arms, the note
-   says exactly what goes, and the same press again inside the window does it.
-   Nothing floats, and anything else calls it off. */
-const CONFIRM_MS = 4000;
+   says exactly what goes, and the same press again does it.
+
+   The armed state has no clock. A window that expires would be the panel
+   changing state with nobody touching it — the one thing this panel never does
+   — and it would put the action that can wipe sixteen hand-tuned keys on a
+   reaction race in the dark. It waits, exactly as ASSIGN waits for its key, and
+   Esc or any other press calls it off. */
 function cancelMap() {
-  clearTimeout(cancelMap._t);
   if (!mapArmed) return;
   mapArmed = false;
   const b = $('[data-act="mappads"]');
@@ -296,7 +300,6 @@ function cancelMap() {
   if (localError.startsWith('MAP replaces')) localError = '';
 }
 function cancelAssign() {
-  clearTimeout(cancelAssign._t);
   if (assignConfirm < 0) return;
   assignConfirm = -1;
   if (localError.startsWith('Key ')) localError = '';
@@ -307,15 +310,40 @@ function cancelAssign() {
    track's slices — work order 8's bug — and it fired even when the mode chosen
    was the one already in force. With a key being edited this sets that key's
    mode; otherwise it is the mode a key takes when you assign it. */
-function setPadMode(mode) {
-  const editing = editKeys && focusKind === 'key' && S && S.pads[focusKey]
+function focusedKey() {
+  return editKeys && focusKind === 'key' && S && S.pads[focusKey]
     && S.pads[focusKey].loaded ? focusKey : -1;
-  const now = editing >= 0 ? S.pads[editing].mode : padMode;
-  padMode = mode;
+}
+/* What the segment is showing, and whose it is. Mode belongs to the key slot
+   beside its buffer and region — a bass loop wants LOOP where a stab wants ONE
+   — so with a key being edited the segment is that key's, and with none it is
+   the mode the next assign will take. It says which, always. */
+function padModeShown() {
+  const k = focusedKey();
+  if (k >= 0) {
+    return { key: k, who: 'KEY ' + (PAD_CAPS[k] || k + 1),
+             mode: settled(`${k}.padmode`, S.pads[k].mode) };
+  }
+  return { key: -1, who: 'NEW KEYS', mode: padMode || 'ONE' };
+}
+function paintPadModes() {
+  if (!S) return;
+  const m = padModeShown();
+  setText($('#pmode-for'), m.who);
   $$('#pad-modes .seg-btn').forEach(b =>
-    b.setAttribute('aria-pressed', b.dataset.pmode === mode));    // paint first
-  if (mode === now) return;                                       // already there
-  if (editing >= 0) send({ op: 'pad.assign', i: editing, mode });
+    b.setAttribute('aria-pressed', b.dataset.pmode === m.mode));
+}
+function setPadMode(mode) {
+  const m = padModeShown();
+  if (mode === m.mode) { paintPadModes(); return; }      // already in force
+  if (m.key >= 0) {
+    predict(`${m.key}.padmode`, mode);                   // paint first
+    paintPadModes();
+    send({ op: 'pad.assign', i: m.key, mode });
+    return;
+  }
+  padMode = mode;                                        // the default for new keys
+  paintPadModes();
 }
 
 function assignToKey(k) {
@@ -328,7 +356,6 @@ function assignToKey(k) {
   if (p && p.loaded && assignConfirm !== k) {
     cancelAssign();
     assignConfirm = k;
-    cancelAssign._t = setTimeout(cancelAssign, CONFIRM_MS);
     localError = `Key ${PAD_CAPS[k] || k + 1} holds ${p.name}. Press it again to `
                + 'replace it; leave it and it stays.';
     return;                              // still armed: the next press decides
@@ -617,6 +644,7 @@ function applyHelp() {
 }
 
 function paintKeyFocus() {
+  paintPadModes();              // the segment follows what it is editing
   $$('#padgrid .pad').forEach((el, k) =>
     el.classList.toggle('editing', editKeys && focusKind === 'key' && k === focusKey));
   $$('#strips .strip').forEach((el, k) =>
@@ -922,11 +950,7 @@ function renderState() {
     const mapped = S.pads.find(p => p.track >= 0);
     padMode = mapped ? mapped.mode : 'ONE';
   }
-  /* The segment shows the key being edited, or the mode the next assign takes. */
-  const showMode = (editKeys && focusKind === 'key' && S.pads[focusKey]
-                    && S.pads[focusKey].loaded) ? S.pads[focusKey].mode : padMode;
-  $$('#pad-modes .seg-btn').forEach(b =>
-    b.setAttribute('aria-pressed', b.dataset.pmode === showMode));
+  paintPadModes();
 
   renderInspector();
 }
@@ -1573,8 +1597,7 @@ const ACT = {
       $('[data-act="mappads"]').setAttribute('aria-pressed', true);   // paint first
       localError = 'MAP replaces all 16 keys with this file\'s slices, and '
                  + `${taken} ${taken === 1 ? 'key holds' : 'keys hold'} audio. `
-                 + 'Press MAP again to go ahead.';
-      cancelMap._t = setTimeout(cancelMap, CONFIRM_MS);
+                 + 'Press MAP again to go ahead, Esc to leave them.';
       return;
     }
     cancelMap();
@@ -1582,6 +1605,7 @@ const ACT = {
   },
   assign: () => {
     assignArmed = !assignArmed;
+    if (!assignArmed) cancelAssign();          // disarming drops a pending replace
     $('[data-act="assign"]').setAttribute('aria-pressed', assignArmed);
   },
   editkeys: () => {
@@ -1611,7 +1635,11 @@ document.addEventListener('mouseup', (e) => {
 });
 document.addEventListener('click', (e) => {
   const b = e.target.closest('[data-act]');
-  if (b && b.dataset.act !== 'mappads') cancelMap();   // anything else calls it off
+  /* An armed confirmation waits for its own press and nothing else, so any
+     other click calls it off. Presses inside the pad grid belong to the assign
+     gesture itself and are left to it. */
+  if (!b || b.dataset.act !== 'mappads') cancelMap();
+  if (!e.target.closest('#padgrid') && (!b || b.dataset.act !== 'assign')) cancelAssign();
   if (b && ACT[b.dataset.act]) ACT[b.dataset.act]();
   const m = e.target.closest('[data-mode]');
   if (m) send({ op: 'mode', i: focus, mode: m.dataset.mode });

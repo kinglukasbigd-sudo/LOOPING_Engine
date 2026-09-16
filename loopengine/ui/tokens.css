@@ -86,6 +86,8 @@
   --w-subject: 44px;  /* TRACK 8 / KEY W — the inspector's subject */
   --w-frames:  11ch;  /* 134,217,728: an offset in the longest stereo file 1024 MB holds */
   --w-btitle:  16ch;  /* LOAD → TRACK 8 and OPEN SESSION share one title box */
+  --w-pmode:   12ch;  /* KEY 1 / NEW KEYS — whose mode the segment shows,
+                         letterspaced display caps, so wider than it reads */
   --w-recstate: 8ch;  /* OFF / ARMED / REC / SAVING, letterspaced */
   --w-rectime:  8ch;  /* 00:00:00 in the mono face — the clock never grows */
   --w-label:   58px;  /* an inspector row label        */

@@ -366,6 +366,11 @@ body.helping [data-help] { opacity: 1; }
 .seg { display: flex; }
 .seg .btn { border-right-width: 0; }
 .seg .btn:last-child { border-right-width: var(--hair); }
+/* Whose mode those three buttons are showing: the key being edited, or the mode
+   new keys take. A control acting on something other than what the user thinks
+   it acts on is work order 8's bug; this names it, in a box wide enough for
+   either reading so the bar cannot move when it changes. */
+#pmode-for { width: var(--w-pmode); flex: none; }
 
 /* ── WAVEFORM ────────────────────────────────────────────────────────── */
 #wave { display: flex; flex-direction: column; }
