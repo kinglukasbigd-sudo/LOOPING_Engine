@@ -173,6 +173,35 @@ def t_each_key_keeps_its_own_mode():
         shutil.rmtree(d, ignore_errors=True)
 
 
+def t_a_device_that_stops_asking_is_noticed():
+    d = base_dir()
+    try:
+        p = Panel(d)
+        p.settle()
+        p.e.stream = types.SimpleNamespace(active=True)    # as if a stream were open
+        h = p.a.device_health()
+        check("while blocks keep arriving the device reads healthy",
+              not h["stalled"] and h["running"], "quiet %.2f s" % h["quiet_s"])
+        time.sleep(0.4)                                    # nothing renders: no callback runs
+        h = p.a.device_health()
+        check("a callback that stops is noticed off the audio thread, inside a quarter second",
+              h["stalled"] and h["quiet_s"] >= 0.25, "quiet %.2f s" % h["quiet_s"])
+        p.settle()
+        check("and it clears itself the moment blocks arrive again",
+              not p.a.device_health()["stalled"])
+        p.e.stream = None
+        check("with no stream open there is nothing to report",
+              not p.a.device_health()["stalled"])
+        body = io.open(os.path.join(ROOT, "loopengine", "app.py"), encoding="utf-8").read()
+        body = body.split("def device_health", 1)[1].split("\n    def ", 1)[0]
+        js = io.open(os.path.join(ROOT, "loopengine", "ui", "app.js"), encoding="utf-8").read()
+        check("it detects and says so, and starts or stops nothing",
+              "start()" not in body and "abort()" not in body and "stop()" not in body
+              and "STALLED ' + audio.quiet_s" in js and "stopped asking for sound" in js)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def t_loading_a_file_cannot_touch_a_key():
     d = base_dir()
     try:
@@ -342,6 +371,7 @@ def t_keys_survive_save_restart_load_and_a_later_file_load():
 if __name__ == "__main__":
     for fn in (t_every_op_the_panel_sends_is_handled,
                t_the_segment_says_whose_mode_it_shows,
+               t_a_device_that_stops_asking_is_noticed,
                t_each_key_keeps_its_own_mode,
                t_loading_a_file_cannot_touch_a_key,
                t_a_mode_is_only_a_mode,

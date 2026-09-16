@@ -70,6 +70,12 @@ class App:
             recordings_dir or os.path.join(home, "recordings")))
         self.record_last = None      # the last finished take, for a panel opened later
         self.record_error = ""
+        # Has the device asked for sound lately? The callback counts blocks and
+        # this thread watches that count move. Nothing here runs on the audio
+        # thread, and nothing here restarts anything.
+        self._blocks_seen = -1
+        self._blocks_at = time.monotonic()
+        self._take_stalled = False
         self._stop = threading.Event()
 
     # -- telemetry ---------------------------------------------------------
@@ -84,6 +90,7 @@ class App:
                 snap["meta"] = self.meta
                 snap["session"] = self.session
                 snap["record"] = self.record_state()
+                snap["audio"] = self.device_health()
                 self.hub.text(snap)
                 sc = self.engine.scope(512)
                 self.hub.broadcast(
@@ -96,6 +103,33 @@ class App:
                 time.sleep(sleep)
             else:
                 nxt = time.monotonic()
+
+    # A block is 5.3 ms at 256 frames and 48 kHz, so a quarter second is fifty
+    # of them. Anything that quiet means the device has stopped asking, and the
+    # room has gone silent.
+    STALL_S = 0.25
+
+    def device_health(self):
+        """Whether the callback is still being called, judged from off the
+        audio thread by watching the block count move.
+
+        Detection, not recovery. Bringing a stream back mid-set is its own risk
+        — a click, a gap, a take that ends up short — so this says what happened
+        and leaves the decision to the person in front of it.
+        """
+        now = time.monotonic()
+        blocks = self.engine.blocks
+        if blocks != self._blocks_seen:
+            self._blocks_seen = blocks
+            self._blocks_at = now
+        quiet = now - self._blocks_at
+        running = self.engine.stream is not None
+        stalled = bool(running and quiet > self.STALL_S)
+        if stalled and self.engine.recorder is not None \
+                and self.engine.recorder.state in (REC_RECORDING, REC_ARMED):
+            self._take_stalled = True            # the take stopped growing with it
+        return {"blocks": blocks, "quiet_s": round(quiet, 2),
+                "stalled": stalled, "running": running}
 
     def start_pump(self):
         threading.Thread(target=self.pump, daemon=True).start()
@@ -815,6 +849,7 @@ class App:
             r = e.recorder = Recorder(e.sr, on_end=self._take_ended)
         if r.state == REC_IDLE:
             self.record_error = ""
+            self._take_stalled = False
             try:
                 r.arm(self._take_path())
             except Exception as x:
@@ -850,7 +885,8 @@ class App:
         self.record_last = {"name": os.path.basename(s["path"]), "seconds": s["seconds"],
                             "dropped": s["dropped"], "error": s["error"]}
         self.hub.text(dict(s, op="record.done", disarmed=False, xruns=xr,
-                           sr=self.engine.sr, dir=self.recordings_dir))
+                           stalled=self._take_stalled, sr=self.engine.sr,
+                           dir=self.recordings_dir))
 
     # -- convenience -------------------------------------------------------
     def load_kit(self, d):

@@ -199,6 +199,15 @@ block the device had to play without: the room hears the gap, and the file does
 not have it. So the inspector also counts the xruns that happened while a take
 ran — the one thing the file cannot tell you afterwards.
 
+**When the device stops asking.** Once, eighteen minutes into a long take, the
+callback simply stopped being called: no error, nothing in the system log, and
+the take stopped growing. The panel now says so where the device name sits — a
+box that is already reserved, so nothing moves when it does — and a take in
+progress says it has stopped growing rather than letting the clock stand in for
+the file. Detection only: nothing restarts a stream. Bringing one back mid-set
+is its own risk, and a silent failure you can see beats one that repairs itself
+wrongly.
+
 ## Layout
 
 ```
@@ -500,6 +509,37 @@ stopped growing and closed cleanly with everything it had been given. It did
 not recur in the second run's 25 minutes under a watchdog. The engine cannot
 notice it today: the panel would show a frozen clock and still meters, and the
 room would be silent.
+
+**The same take, with nothing else on the device.** Work order 7's stall and its
+0-to-20 xrun swing were both measured while a second LOOP ENGINE held the same
+device. That instance was gone by work order 9, so the run was repeated alone —
+the preflight recorded no other engine and no streams on the graph — as three
+ten-minute phases of one continuous take, and a fourth without it:
+
+| phase | take | xruns | blocks |
+|---|---|---|---|
+| recording, nothing else | yes | 0 | 112,873 |
+| recording, a set's load | yes | 12 | 112,836 |
+| recording, nothing else again | yes | 0 | 112,874 |
+| a set's load, not recording | no | 5 | 112,431 |
+
+The take ran 30.1 minutes, well past the 18 at which the first stall appeared:
+frames fed, frames written and frames in the WAV header all 86,677,504, nothing
+lost. Every xrun under a set's load again fell within 2.5 s of a file starting to
+load, and recording still adds none of its own — 0 in twenty minutes of quiet
+take.
+
+**And the stall recurred, alone.** At 13:06:13, in the phase without a take, no
+block arrived for two seconds. `stream.active` was still true, the machine was
+idle — load 0.65, io pressure nil — and the audio thread was outside Python
+entirely, in PortAudio or below it. So contention with the other engine was not
+the cause, and neither is anything this program does on its own threads. A stop,
+close and fresh start brought it back in 1.03 s.
+
+That is why the panel now says when the device has stopped asking, and why it
+does not restart the stream by itself. The fault is below us, what recovery
+should do is a judgement call — a click, a gap, a take that ends up short — and
+a silent failure you can see is the part worth having first.
 
 ## Traps
 

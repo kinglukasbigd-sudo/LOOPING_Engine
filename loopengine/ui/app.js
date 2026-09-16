@@ -44,6 +44,7 @@ function codeOf(e) {
 
 let ws = null, S = null, focus = 0, padMode = null;
 let mapArmed = false, assignConfirm = -1;   // the two gestures that ask first
+let stallSaid = false;                      // the device fault is announced once
 /* Help is a MODE, not a layer. Nothing floats over the grid; each cell that
    has room swaps its own label for an explanation, in its own box. The short
    form has to fit the box it lands in — every target is a reserved cell with
@@ -712,6 +713,7 @@ const REC_WORD = { idle: 'OFF', armed: 'ARMED', recording: 'REC', stopping: 'SAV
 function recLine(state, take) {
   if (state === 'armed') return 'armed — starts with RUN';
   if (state === 'recording') {
+    if (S && S.audio && S.audio.stalled) return 'the device stopped — the take is not growing';
     if (!take || !take.name) return 'recording';
     const low = take.free_s != null && take.free_s < 1800
       ? ' — ' + Math.floor(take.free_s / 60) + ' min of disk left' : '';
@@ -755,7 +757,9 @@ function onRecordDone(msg) {
   const xr = msg.xruns
     ? ` ${msg.xruns} xrun${msg.xruns > 1 ? 's' : ''} while it ran: the room may have heard a dropout the file does not have.`
     : '';
-  localError = `Recorded ${View.clock(msg.seconds)} in ${msg.dir} — ${where}.${lost}${xr}`;
+  const dead = msg.stalled
+    ? ' The device stopped asking for sound while it ran, so the take is shorter than the clock.' : '';
+  localError = `Recorded ${View.clock(msg.seconds)} in ${msg.dir} — ${where}.${lost}${xr}${dead}`;
 }
 
 function onPicked(msg) {
@@ -834,7 +838,21 @@ function buildPads(n) {
 /* ── render pass ────────────────────────────────────────────────────── */
 function renderState() {
   if (!S) return;
-  setText($('#h-device'), S.device);
+  /* A device that has stopped asking for sound takes the name's box: while it
+     is happening it is the only thing about the device worth saying, and that
+     box is already reserved, so nothing moves when it does. */
+  const audio = S.audio || null;
+  const stalled = !!(audio && audio.stalled);
+  setText($('#h-device'), stalled ? 'STALLED ' + audio.quiet_s.toFixed(1) + ' s' : S.device);
+  $('#h-device').closest('.stat').classList.toggle('warn', stalled);
+  if (stalled && !stallSaid) {
+    stallSaid = true;
+    localError = 'The audio device has stopped asking for sound — nothing is playing.'
+      + (S.record && S.record.state === 'recording'
+         ? ' The take has stopped growing; what is already written is safe.' : '');
+  } else if (!stalled) {
+    stallSaid = false;
+  }
   /* A resampler inserted by the sound server is invisible to the user and
      undoes the engine's never-resample property at the last hop. Say so. */
   setText($('#h-rate'), S.resampling
