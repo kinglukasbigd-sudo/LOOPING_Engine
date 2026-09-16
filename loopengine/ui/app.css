@@ -78,18 +78,25 @@ body.helping [data-help] { opacity: 1; }
 #scope  { grid-column: 1 / 4; grid-row: 5; border-bottom: 0; }
 
 /* ── HEAD ────────────────────────────────────────────────────────────── */
+/* THE NUMBER THE EYE RETURNS TO. Bar and beat sit in the upper-left cell, at
+   the largest size on the panel, first in reading order — the rail used to hold
+   them three regions down. The cell is the rail's own width, so the hairline
+   under it continues the rail's edge rather than inventing a new one. */
 #head {
-  display: flex; align-items: center; gap: var(--s5);
-  padding: 0 var(--s4); background: var(--n1);
+  display: grid; grid-template-columns: var(--rail) minmax(0, 1fr);
+  align-items: center; background: var(--n1);
+}
+.head-pos {
+  display: flex; align-items: baseline; gap: var(--s3);
+  height: 100%; padding: 0 var(--s4); border-right: var(--line);
 }
 /* Every header value changes while the panel runs. Each gets a reserved box
    so a CPU figure going 9.8 -> 24.1 does not shove the row along. */
-.mark {
-  font-family: var(--font-display); font-weight: 700;
-  font-size: var(--t4); line-height: var(--lh4);
-  letter-spacing: var(--tr-legend); text-transform: uppercase;
-}
-.head-stats { display: flex; gap: var(--s4); overflow: hidden; }
+/* The wordmark used to sit here. With bar and beat in the upper-left cell there
+   is no room for it at 1366 — it pushed the help button past the edge — and the
+   header's job is the numbers. The name is in the window title. */
+.head-stats { display: flex; gap: var(--s4); overflow: hidden;
+              align-items: center; padding: 0 var(--s4); }
 .stat { display: flex; align-items: baseline; gap: var(--s2); white-space: nowrap; }
 .stat i {
   font-style: normal; font-family: var(--font-display);
@@ -131,7 +138,7 @@ body.helping [data-help] { opacity: 1; }
   font-size: var(--t6); line-height: var(--lh6);
   letter-spacing: var(--tr-tight);
   font-variant-numeric: tabular-nums;
-  margin: var(--s2) 0 var(--s3);   /* optical, not equal: caps sit high */
+  min-width: var(--w-pos);         /* 999.4 -> 1000.1 must not shove the stats */
   opacity: var(--dim1);
 }
 .pos.rolling { opacity: 1; color: var(--accent); }   /* ACCENT 1 — playhead */
@@ -527,9 +534,6 @@ kbd {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   height: var(--lh2);          /* an empty row keeps its box */
 }
-/* The wordmark is letterspaced; without this it starts a hair right of the
-   panel edges below it. Baseline, not box, is what the eye lines up. */
-.mark { margin-left: calc(var(--tr-legend) * -0.5); }
 /* The note has a place of its own, the same height whether it says anything or
    not, so a note appearing or clearing moves nothing below it. A long one
    scrolls inside its box instead of pushing the key legend down the plate. */

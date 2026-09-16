@@ -125,6 +125,8 @@ def t_every_op_the_panel_sends_is_handled():
           "CONFIRM_MS" not in src
           and re.search(r"function cancelMap\(\)[\s\S]{0,300}?setTimeout", src) is None
           and re.search(r"function cancelAssign\(\)[\s\S]{0,300}?setTimeout", src) is None)
+    check("the counters a reset clears are found by name, not by their place in the row",
+          "['#h-xrun', '#h-clip']" in src and "$$('.head-stats .stat')[5]" not in src)
     check("the panel asks for a remap in exactly one place, and it carries confirm",
           src.count("'pads.map'") == 1 and re.search(r"op: 'pads\.map'[^}]*confirm: true", src)
           is not None, "%d senders" % src.count("'pads.map'"))

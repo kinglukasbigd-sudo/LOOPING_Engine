@@ -55,6 +55,7 @@ let stallSaid = false;                      // the device fault is announced onc
    ever restored from here. */
 const HELP = {
   pos:     ['BAR AND BEAT',      'Where the master clock is. Counts from 1. Turns orange while running.'],
+  transport: ['TRANSPORT',       'RUN starts and stops the clock, RTZ returns it to the top, PANIC cuts everything now.'],
   tempo:   ['BEATS PER MINUTE',  'The master tempo. TAP it four times to set it by hand.'],
   quantum: ['WHEN LAUNCHES LAND','Changes wait for this boundary before taking effect. OFF applies at once.'],
   master:  ['OUTPUT LEVEL',      'Final level before the limiter. The ladder below is what is leaving.'],
@@ -1664,10 +1665,15 @@ document.addEventListener('click', (e) => {
   const pm = e.target.closest('[data-pmode]');
   if (pm) setPadMode(pm.dataset.pmode);
 });
-$$('.head-stats .stat')[5].classList.add('clickable');
-$$('.head-stats .stat')[6].classList.add('clickable');
-$$('.head-stats .stat')[5].onclick = () => send({ op: 'clip.reset' });
-$$('.head-stats .stat')[6].onclick = () => send({ op: 'clip.reset' });
+/* The two counters a reset actually clears, found by name rather than by their
+   place in the row. Counting along the stats put this on PATH and CPU, so the
+   click landed on figures a reset does nothing to, and the two counters that
+   sit there to be cleared did not answer. */
+['#h-xrun', '#h-clip'].forEach((sel) => {
+  const stat = $(sel).closest('.stat');
+  stat.classList.add('clickable');
+  stat.onclick = () => send({ op: 'clip.reset' });
+});
 $('#bpm-slider').oninput = (e) => send({ op: 'transport.bpm', v: +e.target.value });
 $('#master').oninput = (e) => send({ op: 'master.gain', v: +e.target.value });
 

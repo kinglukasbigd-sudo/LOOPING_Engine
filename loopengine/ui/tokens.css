@@ -66,7 +66,7 @@
   --rail:   232px;
   --insp:   288px;
   --row-h:   26px;    /* one track strip — 8 fit above 700px tall */
-  --head-h:  34px;
+  --head-h:  48px;    /* the bar counter reads at the largest size, up here */
   --scope-h: 92px;
   --wave-h: 180px;
   --pads-h: 168px;
@@ -86,6 +86,7 @@
   --w-subject: 44px;  /* TRACK 8 / KEY W — the inspector's subject */
   --w-frames:  11ch;  /* 134,217,728: an offset in the longest stereo file 1024 MB holds */
   --w-btitle:  16ch;  /* LOAD → TRACK 8 and OPEN SESSION share one title box */
+  --w-pos:      6ch;  /* 001.1, and still 1000.4 on a long set */
   --w-pmode:   12ch;  /* KEY 1 / NEW KEYS — whose mode the segment shows,
                          letterspaced display caps, so wider than it reads */
   --w-recstate: 8ch;  /* OFF / ARMED / REC / SAVING, letterspaced */
