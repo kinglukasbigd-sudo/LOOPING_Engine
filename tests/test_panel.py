@@ -35,6 +35,14 @@ KIT = os.path.join(ROOT, "kits", "testkit-124")
 # browser" and skips every check here; .pylibs is where this project already
 # keeps what it vendors, and it is not a cache anything else prunes.
 os.environ["PLAYWRIGHT_BROWSERS_PATH"] = os.path.join(ROOT, ".pylibs", "ms-playwright")
+if not os.path.isdir(KIT):
+    # The kit's wavs are gitignored, so a fresh clone and every CI run starts
+    # without them. run.py builds the kit only when no --kit is given, and this
+    # server is started with one, so the test builds it the same way demo does.
+    sys.path.insert(0, ROOT)
+    from loopengine import demo
+    print("building the synthesised test kit in %s" % KIT)
+    demo.build(KIT)
 FAILS = []
 
 
