@@ -1492,6 +1492,15 @@ function frame() {
     const [x, W] = px(e);
     return View.xToFrame(x, W, v, t.frames);
   };
+  /* A sweep chooses from what is on screen. Run past an edge and it holds at
+     that edge instead of carrying on into samples the view is not showing: the
+     panel does not scroll under a drag — that is disorienting, and the brief
+     rules it out — so a point chosen out there could not have been seen. To
+     take in more than the view, zoom out first. */
+  const frameInView = (e, t, v) => {
+    const [x, W] = px(e);
+    return View.xToFrame(Math.max(0, Math.min(W, x)), W, v, t.frames);
+  };
   /* Which handle, if either, is within 8 px. The closer one wins; on a region
      narrower than a pixel, the side the pointer is on. */
   const nearHandle = (e, t, v) => {
@@ -1530,7 +1539,7 @@ function frame() {
       cv.style.cursor = 'grabbing';
     } else if (edge === 'in') { drag = { edge: 'in', le }; handleFocus = 'in'; }
     else if (edge === 'out') { drag = { edge: 'out', ls }; handleFocus = 'out'; }
-    else drag = { edge: 'sweep', anchor: frameAt(e, t, v), x: e.clientX, moved: false };
+    else drag = { edge: 'sweep', anchor: frameInView(e, t, v), x: e.clientX, moved: false };
     if (drag.edge === 'in' || drag.edge === 'out') grabbed = drag.edge;  // lit this frame
     e.preventDefault();
   });
@@ -1544,17 +1553,19 @@ function frame() {
       setView(t, View.pan(drag.v, t.frames, px(e)[1], e.clientX - drag.x));
       return;
     }
-    const f = frameAt(e, t, viewOf(t));
+    const v = viewOf(t);
     if (drag.edge === 'sweep') {
       // nothing at all until the press has travelled: see SWEEP_MIN_PX
       if (!drag.moved && Math.abs(e.clientX - drag.x) < SWEEP_MIN_PX) return;
       drag.moved = true;
-      const [a, b] = View.sweep(drag.anchor, f, t.frames);
-      handleFocus = f >= drag.anchor ? 'out' : 'in';   // the end the hand is moving
+      const to = frameInView(e, t, v);
+      const [a, b] = View.sweep(drag.anchor, to, t.frames);
+      handleFocus = to >= drag.anchor ? 'out' : 'in';   // the end the hand is moving
       grabbed = handleFocus;
       commit(a, b);
       return;
     }
+    const f = frameAt(e, t, v);
     if (drag.edge === 'in') commit(Math.min(f, drag.le - View.MIN_LOOP), drag.le);
     else commit(drag.ls, Math.max(f, drag.ls + View.MIN_LOOP));
   });

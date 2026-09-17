@@ -555,6 +555,26 @@ def t_a_sweep_sets_the_loop_at_every_zoom(page):
           region(page) == forwards, "%s then %s" % (forwards, region(page)))
 
 
+def t_a_sweep_stops_at_the_edge_of_the_view(page):
+    """The panel does not scroll under a drag, so a loop point chosen past the
+    edge would be one nobody could see. To take in more than the view, zoom
+    out."""
+    closed(page)
+    focus_track(page, 0)
+    whole_file(page)
+    whole_loop(page)
+    for _ in range(5):
+        page.keyboard.press("Equal")
+    page.wait_for_timeout(150)
+    paint(page)
+    edge = page.evaluate("() => { const v = viewOf(subject()); return [Math.round(v.vs), Math.round(v.ve)]; }")
+    width = page.locator("#wcanvas").bounding_box()["width"]
+    drag(page, "#wcanvas", 300, width + 260)          # off the right-hand edge
+    landed(page)
+    check("a sweep that runs off the edge stops at the last sample in view",
+          region(page)[1] == edge[1], "%s, the view ends at %d" % (region(page), edge[1]))
+
+
 def t_a_click_is_not_a_sweep(page):
     """A region is hand-tuned work. The MAP wipe was the same class of harm:
     something destructive on a gesture the hand makes by accident."""
@@ -728,6 +748,7 @@ if __name__ == "__main__":
                        t_nothing_moves_that_was_not_asked_to,
                        t_a_dragged_region_stays_where_it_was_put,
                        t_a_sweep_sets_the_loop_at_every_zoom,
+                       t_a_sweep_stops_at_the_edge_of_the_view,
                        t_a_click_is_not_a_sweep,
                        t_panning_leaves_the_region_alone,
                        t_a_sweep_edits_whatever_the_panel_is_showing,

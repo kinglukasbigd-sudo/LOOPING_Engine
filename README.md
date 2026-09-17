@@ -106,7 +106,9 @@ release, and those two samples are the loop points, mapped through whatever
 zoom you are at. A backwards sweep gives the same region as a forwards one. A
 press that does not travel is a click, and a click changes nothing: below a few
 pixels of movement nothing is sent, so a stray press cannot replace a region you
-tuned by hand. Drag a handle to move that one loop point — handles win the press
+tuned by hand. A sweep takes in what is on screen: run past an edge and it holds
+there rather than carrying on into audio you cannot see — nothing scrolls under
+a drag, so to take in more, zoom out first. Drag a handle to move that one loop point — handles win the press
 that lands on them, so tuning an edge never starts a new region.
 
 Panning is SHIFT: SHIFT-drag on the waveform, SHIFT-scroll, or the middle
@@ -259,7 +261,7 @@ PYTHONPATH=.pylibs python3 -m tests     # with the vendored dependencies
 python3 -m tests                        # with installed ones
 ```
 
-415 checks in 16 files, about 50 seconds on the machine they were written on —
+416 checks in 16 files, about 50 seconds on the machine they were written on —
 more than half of that the browser file, which is the only one that starts a
 server and drives a real page.
 Each file runs in its own process and prints PASS, FAIL or SKIP for every check,
