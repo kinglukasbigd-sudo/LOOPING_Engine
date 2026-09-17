@@ -413,8 +413,14 @@ kbd {
 }
 
 /* ── PADS ────────────────────────────────────────────────────────────── */
+/* CLIP, NOT HIDDEN. A parked panel is translated 101% down, and a transformed
+   descendant still counts towards a scroll container's scrollable area — so
+   `hidden` left this section scrollable by twice its height. Clicking a row in
+   the file browser focused it, the browser scrolled that row into view, and the
+   pads bar and all sixteen keys slid up 80 px and stayed there: the panel
+   moving with nobody asking it to. `clip` makes no scroll container at all. */
 #pads { display: flex; flex-direction: column; position: relative;
-        overflow: hidden; }   /* clips the browser when it is parked */
+        overflow: clip; }
 .padgrid {
   flex: 1; display: grid; min-height: 0;
   grid-template-columns: repeat(4, minmax(0, 1fr));

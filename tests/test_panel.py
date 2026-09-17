@@ -129,22 +129,28 @@ window.__sent = [];
     return real.call(this, data);
   };
 })();
-window.__boxes = () => {
-  const out = {};
-  let n = 0;
-  for (const el of document.querySelectorAll('body *')) {
-    const r = el.getBoundingClientRect();
-    out[n++] = [el.tagName + (el.id ? '#' + el.id : ''),
-                [r.x, r.y, r.width, r.height].map(v => Math.round(v * 10) / 10).join(',')];
-  }
-  return out;
+/* The stillness probe holds the ELEMENTS it measured, not a numbered list of
+   their boxes. Keyed by position, one element added or removed anywhere shifts
+   every index after it, and the comparison then reports a row against some
+   other row — movement that never happened, and, the other way round, real
+   movement hidden behind a neighbour's box. */
+window.__box = (el) => {
+  const r = el.getBoundingClientRect();
+  return [r.x, r.y, r.width, r.height].map(v => Math.round(v * 10) / 10).join(',');
 };
-window.__moved = (a, b, skip) => {
+window.__mark = () => {
+  window.__snap = [];
+  for (const el of document.querySelectorAll('body *')) window.__snap.push([el, window.__box(el)]);
+  return window.__snap.length;
+};
+window.__moved = (skip) => {
   const out = [];
-  for (const k of Object.keys(a)) {
-    if (!b[k]) continue;
-    if (skip && skip.some(s => a[k][0].indexOf(s) >= 0)) continue;
-    if (a[k][1] !== b[k][1]) out.push(a[k][0] + ' ' + a[k][1] + ' -> ' + b[k][1]);
+  for (const [el, was] of window.__snap || []) {
+    if (!el.isConnected) continue;             // gone is not moved
+    const name = el.tagName + (el.id ? '#' + el.id : '');
+    if (skip && skip.some(s => name.indexOf(s) >= 0)) continue;
+    const now = window.__box(el);
+    if (now !== was) out.push(name + ' ' + was + ' -> ' + now);
   }
   return out;
 };
@@ -386,27 +392,24 @@ def t_feedback_lands_before_the_send(page):
 def t_nothing_moves_that_was_not_asked_to(page):
     closed(page)
     paint(page)
-    a = page.evaluate("window.__boxes()")
+    page.evaluate("window.__mark()")
     page.keyboard.press("Digit3")            # play a key
     page.wait_for_timeout(200)
     paint(page)
-    check("pressing a key moves nothing on the panel",
-          page.evaluate("([a, b]) => window.__moved(a, b, [])",
-                        [a, page.evaluate("window.__boxes()")]) == [])
+    moved = page.evaluate("s => window.__moved(s)", [])
+    check("pressing a key moves nothing on the panel", moved == [], "; ".join(moved[:3]))
 
-    a = page.evaluate("window.__boxes()")
+    page.evaluate("window.__mark()")
     page.click('[data-act="mappads"]')       # the note appears in its reserved box
     paint(page)
-    moved = page.evaluate("([a, b]) => window.__moved(a, b, ['DIV#i-error'])",
-                          [a, page.evaluate("window.__boxes()")])
+    moved = page.evaluate("s => window.__moved(s)", ["DIV#i-error"])
     check("a note appearing moves nothing but itself", moved == [], "; ".join(moved[:3]))
     page.keyboard.press("Escape")
     paint(page)
 
-    a = page.evaluate("window.__boxes()")
+    page.evaluate("window.__mark()")
     open_file(page, "tk_kick")
-    moved = page.evaluate("([a, b]) => window.__moved(a, b, [])",
-                          [a, page.evaluate("window.__boxes()")])
+    moved = page.evaluate("s => window.__moved(s)", [])
     check("loading a file moves nothing either", moved == [], "; ".join(moved[:3]))
 
 
