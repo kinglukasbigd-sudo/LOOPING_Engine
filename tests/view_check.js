@@ -243,6 +243,81 @@ const MIN4 = 48000 * 240;           // the brief's four-minute file: 11,520,000 
         Object.keys(c.entries()).join() === 'track:5', Object.keys(c.entries()).join());
 }
 
+// ── a sweep of the pointer ────────────────────────────────────────────────
+// Work order 10: plain drag across the waveform sets the loop. The failure
+// mode is a pixel reaching engine state as though it were a sample, so every
+// check here is in samples, at zoom levels a hand actually works at.
+{
+  const frames = 185806;
+  const pairs = [[0, frames], [46495, 92817], [1000, 1000], [12345.4, 12345.6],
+                 [frames - 10, frames + 500], [-200, 300], [frames, frames],
+                 [0, 63], [frames - 63, frames], [90000, 89990]];
+  let mirrored = true, short = 0, escaped = 0;
+  const sent = [];
+  for (const [a, b] of pairs) {
+    const f = V.sweep(a, b, frames), r = V.sweep(b, a, frames);
+    if (f[0] !== r[0] || f[1] !== r[1]) mirrored = false;
+    if (f[1] - f[0] < V.MIN_LOOP) short++;
+    if (f[0] < 0 || f[1] > frames || !Number.isInteger(f[0]) || !Number.isInteger(f[1])) escaped++;
+    sent.push([f[0], f[1], frames]);
+  }
+  check('a backwards sweep gives the same region as a forwards one', mirrored,
+        `${pairs.length} pairs both ways`);
+  check('no sweep is shorter than the engine keeps', short === 0,
+        `${short} of ${pairs.length} under ${V.MIN_LOOP} samples`);
+  check('a sweep lands on whole samples inside the file', escaped === 0);
+  const tail = V.sweep(frames - 5, frames + 400, frames);
+  check('a sweep off the end of the file pulls its start back rather than shrink',
+        tail[1] === frames && tail[1] - tail[0] === V.MIN_LOOP, `${tail[0]}..${tail[1]}`);
+  check('a file shorter than the minimum loops end to end',
+        V.sweep(10, 20, 40).join() === '0,40', V.sweep(10, 20, 40).join());
+  // Handed to tests/test_zoom.py, which puts each one through the real
+  // Track.set_loop: what the panel paints has to be what the engine keeps.
+  console.log(['DATA', 'sweep', JSON.stringify(sent)].join('\t'));
+}
+
+{
+  const frames = MIN4, W = 1079;
+  let bad = 0, free = 0, forced = 0;
+  for (const z of [1, 0.5, 0.05, 0.002, 1e-5]) {
+    for (const off of [0, 0.25, 0.9]) {
+      const span = Math.max(V.minSpan(W), frames * z);
+      const v = V.clamp({ vs: frames * off, ve: frames * off + span }, frames, W);
+      for (const [x0, x1] of [[10, 900], [900, 10], [0, W], [500, 503], [W, 0]]) {
+        const lo = Math.min(x0, x1), hi = Math.max(x0, x1);
+        const a = V.xToFrame(lo, W, v, frames), b = V.xToFrame(hi, W, v, frames);
+        const f = V.sweep(V.xToFrame(x0, W, v, frames), V.xToFrame(x1, W, v, frames), frames);
+        if ((f[1] - f[0]) > V.MIN_LOOP && f[0] > 0 && f[1] < frames) {
+          free++;
+          if (f[0] !== a || f[1] !== b) bad++;
+        } else { forced++; }
+      }
+    }
+  }
+  check('a sweep hands over the samples under the two pixels, at every zoom',
+        bad === 0, `${bad} wrong of ${free} free sweeps; ${forced} held by an edge`);
+}
+
+// ── dragging the overview span ────────────────────────────────────────────
+{
+  const frames = MIN4, W = 1079;
+  const v = V.clamp({ vs: frames * 0.4, ve: frames * 0.4 + 480000 }, frames, W);
+  const Wmini = 240;
+  const moved = V.panFrames(v, frames, W, 30 / Wmini * frames);
+  check('dragging the overview span moves the view by that fraction of the file',
+        Math.abs(moved.vs - (v.vs + 30 / Wmini * frames)) < 1e-6
+        && Math.abs((moved.ve - moved.vs) - (v.ve - v.vs)) < 1e-6,
+        `${moved.vs.toFixed(1)}..${moved.ve.toFixed(1)}`);
+  const left = V.panFrames(v, frames, W, -1e12), right = V.panFrames(v, frames, W, 1e12);
+  check('and stops at either end of the file without shrinking the view',
+        left.vs === 0 && right.ve === frames
+        && Math.abs((left.ve - left.vs) - (v.ve - v.vs)) < 1e-6
+        && Math.abs((right.ve - right.vs) - (v.ve - v.vs)) < 1e-6,
+        `${left.vs}..${left.ve} | ${right.vs}..${right.ve}`);
+  check('a drag that has not moved leaves the view exactly where it was',
+        V.panFrames(v, frames, W, 0).vs === v.vs && V.panFrames(v, frames, W, NaN).ve === v.ve);
+}
+
 // ── a take's clock ───────────────────────────────────────────────────────
 {
   const lengths = new Set();

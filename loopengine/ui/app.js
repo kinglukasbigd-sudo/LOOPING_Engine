@@ -61,7 +61,7 @@ const HELP = {
   master:  ['OUTPUT LEVEL',      'Final level before the limiter. The ladder below is what is leaving.'],
   num:     ['N',                 'Track number. Hold SHIFT and press its key to mute or launch it.'],
   source:  ['FILE ON THIS TRACK','The loaded file. Drop one here, or press L to browse.'],
-  wave:    ['THIS FILE',         'Orange loops. Scroll zooms at the pointer, drag moves, SHIFT-drag draws a loop.'],
+  wave:    ['THIS FILE',         "Orange is the loop: drag across the panel to set one. SHIFT-drag or this row's lit span moves the view; scroll zooms."],
   bpm:     ['DETECTED TEMPO',    'Measured from the file. Shown only — it never moves a loop point.'],
   loop:    ['LOOP LENGTH',       'How long the looping part is, in beats of this file.'],
   level:   ['OUTPUT',            'How loud this track is right now. Fills solid if it clips.'],
@@ -498,6 +498,41 @@ function paintMinimap(cell, i, t) {
   }
 }
 
+/* PANNING'S OWN HOME. The lit span says which part of the file the panel is
+   showing; drag it and the panel scrolls. That is the real resolution of the
+   gesture conflict rather than a reshuffle of modifiers: the waveform is for
+   choosing, the strip is for navigating, and neither has to ask which the hand
+   meant.
+
+   The grab target is the whole envelope cell, not the lit hairline — a rule one
+   pixel high is not something to find one-handed in the dark. Live only while
+   this row's panel is zoomed, because at the whole file there is nowhere to
+   scroll to, and the row keeps its own gestures. */
+let miniPan = null;
+function startMiniPan(e, i) {
+  if (e.button !== 0 || !S || !e.target.closest('.c-wave')) return false;
+  const t = S.tracks[i];
+  if (!t || !t.loaded) return false;
+  const v = views.peek('track:' + i, fileSig(t));
+  if (!v || View.isWhole(v, t.frames)) return false;
+  miniPan = { i, v, x: e.clientX, name: t.name, frames: t.frames,
+              W: e.target.closest('.c-wave').getBoundingClientRect().width };
+  e.preventDefault();
+  return true;
+}
+(function wireMinimap() {
+  window.addEventListener('mousemove', (e) => {
+    if (!miniPan || !S) return;
+    const t = S.tracks[miniPan.i];
+    if (!t || !t.loaded) return;
+    // dx of the strip's width is dx of the file: the strip IS the whole file
+    const df = (e.clientX - miniPan.x) / (miniPan.W || 1) * miniPan.frames;
+    setView({ kind: 'track', i: miniPan.i, name: miniPan.name, frames: miniPan.frames },
+            View.panFrames(miniPan.v, miniPan.frames, cssW(), df));
+  });
+  window.addEventListener('mouseup', () => { miniPan = null; });
+})();
+
 function beatFrames(t) {
   const bpm = t.bpm > 0 ? t.bpm : (S ? S.bpm : 124);
   return 60 / bpm * t.sr;
@@ -536,6 +571,9 @@ function buildStrips(n) {
     el.addEventListener('mousedown', (e) => {
       if (e.target.closest('button, input')) return;
       setFocus(i);
+      // Scrolling the view is not a transport gesture: pressing again to carry
+      // on panning must not read as a double click and launch the track.
+      if (startMiniPan(e, i)) return;
       if (e.detail === 2) { markQueued(i, 'TOG'); send({ op: 'track.toggle', i }); }
     });
     for (const [t, op] of [['mute', 'track.mute'], ['solo', 'track.solo']]) {
@@ -1421,14 +1459,30 @@ function frame() {
 }
 
 /* ── waveform interaction ───────────────────────────────────────────── */
-/* Handles edit the loop; everything else moves the view. Drag the background
-   to pan, scroll to zoom where you point, SHIFT-drag to draw a new loop —
-   plain drag used to draw one, and panning took that gesture. Every pixel
-   goes through the current view on its way to a sample, so a region set
-   while zoomed lands on the samples under the pointer, never on pixels of
-   the whole file. */
+/* SWEEP THE POINTER ACROSS THE WAVEFORM TO SET THE LOOP: press, drag,
+   release, and those two samples are the loop points. That is what this panel
+   is for, so it has the gesture with no modifier. It had it at the beginning;
+   work order 6 gave plain drag to panning, and the thing done constantly
+   quietly lost its gesture to the thing done occasionally.
+
+   SHIFT pans — for the wheel and for the drag alike, one rule instead of two —
+   and so does the middle button, as in every other audio tool. Panning also
+   has a home of its own now: the overview strip on the track's row, which
+   competes with nothing. Handles still win the press that lands on them, so
+   tuning an edge never starts a new region.
+
+   A press that does not travel is a click, and a click does nothing at all.
+   These regions are hand-tuned work; a stray press must not be able to replace
+   one, and must not leave a zero-length loop behind either.
+
+   Every pixel goes through the current view on its way to a sample, so a
+   region set while zoomed lands on the samples under the pointer, never on
+   pixels of the whole file. */
 (function wireWave() {
   const cv = $('#wcanvas');
+  /* Far enough that no hand holding still crosses it, close enough that a
+     deliberate sweep is never swallowed. */
+  const SWEEP_MIN_PX = 3;
   let drag = null;
   const px = (e) => {
     const b = cv.getBoundingClientRect();
@@ -1454,24 +1508,30 @@ function frame() {
     sendRegion(ls, le);
   };
 
+  const cursorFor = (e, t) => (e.shiftKey ? 'grab'
+    : (nearHandle(e, t, viewOf(t)) ? 'col-resize' : 'crosshair'));
+
   cv.addEventListener('mousemove', (e) => {
     const t = subject();
     if (drag || !t || !t.loaded) return;
-    cv.style.cursor = nearHandle(e, t, viewOf(t)) ? 'col-resize'
-      : (e.shiftKey ? 'crosshair' : 'grab');
+    cv.style.cursor = cursorFor(e, t);
   });
 
   cv.addEventListener('mousedown', (e) => {
+    if (e.button !== 0 && e.button !== 1) return;   // a right press is not a gesture here
     const t = subject();
     if (!t || !t.loaded) return;
     const v = viewOf(t);
     const edge = nearHandle(e, t, v);
     const [ls, le] = liveLoop(t.i, t);
-    if (edge === 'in') { drag = { edge: 'in', le }; handleFocus = 'in'; }
+    if (e.shiftKey || e.button === 1) {
+      // an explicit modifier says pan, wherever the pointer happens to be
+      drag = { edge: 'pan', x: e.clientX, v };
+      cv.style.cursor = 'grabbing';
+    } else if (edge === 'in') { drag = { edge: 'in', le }; handleFocus = 'in'; }
     else if (edge === 'out') { drag = { edge: 'out', ls }; handleFocus = 'out'; }
-    else if (e.shiftKey) { drag = { edge: 'new', anchor: frameAt(e, t, v) }; handleFocus = 'out'; }
-    else { drag = { edge: 'pan', x: e.clientX, v }; cv.style.cursor = 'grabbing'; }
-    if (drag.edge !== 'pan') grabbed = drag.edge;   // lights the handle this frame
+    else drag = { edge: 'sweep', anchor: frameAt(e, t, v), x: e.clientX, moved: false };
+    if (drag.edge === 'in' || drag.edge === 'out') grabbed = drag.edge;  // lit this frame
     e.preventDefault();
   });
 
@@ -1485,35 +1545,54 @@ function frame() {
       return;
     }
     const f = frameAt(e, t, viewOf(t));
-    if (drag.edge === 'in') commit(Math.min(f, drag.le - 64), drag.le);
-    else if (drag.edge === 'out') commit(drag.ls, Math.max(f, drag.ls + 64));
-    else commit(Math.min(drag.anchor, f), Math.max(drag.anchor, f));
+    if (drag.edge === 'sweep') {
+      // nothing at all until the press has travelled: see SWEEP_MIN_PX
+      if (!drag.moved && Math.abs(e.clientX - drag.x) < SWEEP_MIN_PX) return;
+      drag.moved = true;
+      const [a, b] = View.sweep(drag.anchor, f, t.frames);
+      handleFocus = f >= drag.anchor ? 'out' : 'in';   // the end the hand is moving
+      grabbed = handleFocus;
+      commit(a, b);
+      return;
+    }
+    if (drag.edge === 'in') commit(Math.min(f, drag.le - View.MIN_LOOP), drag.le);
+    else commit(drag.ls, Math.max(f, drag.ls + View.MIN_LOOP));
   });
 
-  window.addEventListener('mouseup', () => {
-    const panned = drag && drag.edge === 'pan';
+  /* Hold the hand's version until the engine reports the same numbers, then
+     let go. The engine may keep a region change until the next quantum, so the
+     deadline tracks the quantum: a fixed 4 s would expire mid-wait at 4BAR and
+     snap the readout back to a value the engine is about to replace. It is
+     still a deadline — a dropped socket must not leave the panel showing a
+     number nothing agrees with. Every gesture that commits a region ends here,
+     including the double click, which lands after its own mouseup. */
+  const settle = () => {
+    if (!dragLoop) return;
+    const held = dragLoop;
+    const grace = Math.max(4000, (S ? S.pending_ms : 0) + 2000);
+    const poll = setInterval(() => {
+      if (dragLoop !== held) return clearInterval(poll);
+      // a key's echo arrives in the pads, not in the track with its number
+      const echo = S && (held.kind === 'key' ? S.pads[held.i] : S.tracks[held.i]);
+      if (echo && echo.ls === held.ls && echo.le === held.le) {
+        dragLoop = null; clearInterval(poll);
+      }
+    }, 120);
+    setTimeout(() => { if (dragLoop === held) dragLoop = null; }, grace);
+  };
+
+  window.addEventListener('mouseup', (e) => {
+    const done = drag;
     drag = null;
     grabbed = null;
-    if (panned) { cv.style.cursor = 'grab'; return; }
-    if (dragLoop) {
-      const held = dragLoop;
-      // The engine may hold a region change until the next quantum, so keep
-      // showing the hand's version until it reports the same numbers. The
-      // deadline tracks the quantum: a fixed 4 s would expire mid-wait at
-      // 4BAR and snap the readout back to a value the engine is about to
-      // replace. It is still a deadline — a dropped socket must not leave
-      // the panel showing a number nothing agrees with.
-      const grace = Math.max(4000, (S ? S.pending_ms : 0) + 2000);
-      const settle = setInterval(() => {
-        if (dragLoop !== held) return clearInterval(settle);
-        // a key's echo arrives in the pads, not in the track with its number
-        const echo = S && (held.kind === 'key' ? S.pads[held.i] : S.tracks[held.i]);
-        if (echo && echo.ls === held.ls && echo.le === held.le) {
-          dragLoop = null; clearInterval(settle);
-        }
-      }, 120);
-      setTimeout(() => { if (dragLoop === held) dragLoop = null; }, grace);
+    if (!done) return;
+    if (done.edge === 'pan') {
+      const t = subject();
+      cv.style.cursor = t && t.loaded ? cursorFor(e, t) : '';
+      return;
     }
+    if (done.edge === 'sweep' && !done.moved) return;   // a click changed nothing
+    settle();
   });
 
   /* The wheel zooms around the sample under the pointer; SHIFT, or a sideways
@@ -1536,7 +1615,9 @@ function frame() {
 
   cv.addEventListener('dblclick', () => {
     const t = subject();
-    if (t && t.loaded) commit(0, t.frames);
+    if (!t || !t.loaded) return;
+    commit(0, t.frames);
+    settle();
   });
 })();
 

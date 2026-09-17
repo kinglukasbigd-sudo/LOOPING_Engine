@@ -13,6 +13,11 @@
   /* Past one sample per 4 px there is nothing more to see. */
   const PX_PER_SAMPLE_MAX = 4;
 
+  /* The shortest region the engine keeps — Track.set_loop widens anything
+     narrower. The panel applies it too, so a sweep paints the length that is
+     about to exist rather than one the engine is about to replace. */
+  const MIN_LOOP = 64;
+
   function minSpan(W) {
     return Math.max(1, (W > 0 ? W : 1) / PX_PER_SAMPLE_MAX);
   }
@@ -56,6 +61,29 @@
     const span = v.ve - v.vs;
     const d = W > 0 ? -dx / W * span : 0;
     return clamp({ vs: v.vs + d, ve: v.ve + d }, frames, W);
+  }
+
+  /* Shift the window by whole samples rather than by pixels of the panel: the
+     overview strip is the whole file, so a hand moving dx of its width moves
+     the view dx of the file. Panning the waveform moves the material with the
+     hand; dragging the lit span moves the window with the hand, which is the
+     opposite sign and a different scale — hence its own function rather than
+     an inverted call to pan(). */
+  function panFrames(v, frames, W, df) {
+    const d = Number.isFinite(df) ? df : 0;
+    return clamp({ vs: v.vs + d, ve: v.ve + d }, frames, W);
+  }
+
+  /* The two ends of a sweep, in order, as a region the engine will accept
+     unchanged: right-to-left gives exactly what left-to-right gives, and
+     nothing shorter than MIN_LOOP survives. Same rule, same order, as
+     Track.set_loop — a region the engine would rewrite is a region the panel
+     painted wrongly. */
+  function sweep(a, b, frames) {
+    const n = Number.isFinite(frames) ? Math.max(0, Math.floor(frames)) : 0;
+    if (!Number.isFinite(a) || !Number.isFinite(b) || n <= MIN_LOOP) return [0, n];
+    const ls = Math.max(0, Math.min(Math.round(Math.min(a, b)), n - MIN_LOOP));
+    return [ls, Math.max(ls + MIN_LOOP, Math.min(Math.round(Math.max(a, b)), n))];
   }
 
   /* The loop, centred, with `margin` of its length either side — the fastest
@@ -271,7 +299,8 @@
   }
 
   const View = {
-    PX_PER_SAMPLE_MAX, minSpan, whole, isWhole, clamp, zoomAt, pan, fitLoop,
+    PX_PER_SAMPLE_MAX, MIN_LOOP, minSpan, whole, isWhole, clamp, zoomAt, pan,
+    panFrames, sweep, fitLoop,
     xToFrame, frameToX, nudgeStep, envelopeSource, samplesSource,
     overviewSource, bucketSize, bucketOf, columns, sampleLine, store, coalescer,
     clock,

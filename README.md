@@ -101,14 +101,25 @@ replaces every key at once, filling all 16 from the focused file's slices; when
 any key holds audio it asks first, and a second press does it. Neither ask has a
 clock: an armed control waits, and Esc or any other press calls it off.
 
-On the waveform: drag a handle to move that loop point, SHIFT-drag to draw a
-new loop, drag anywhere else to pan, scroll to zoom around the pointer, and
-double click to loop the whole file. Zooming changes nothing you hear and
-sends nothing to the engine. The arrow keys nudge the aimed point by one pixel
-of what you are looking at, so they get finer as you zoom in — at full zoom,
-one sample. While zoomed, the track's row lights the part of the file in view
-on its bottom rule, and if the loop runs past an edge of the view, that edge
-of the panel lights.
+On the waveform: **sweep the pointer across it to set the loop** — press, drag,
+release, and those two samples are the loop points, mapped through whatever
+zoom you are at. A backwards sweep gives the same region as a forwards one. A
+press that does not travel is a click, and a click changes nothing: below a few
+pixels of movement nothing is sent, so a stray press cannot replace a region you
+tuned by hand. Drag a handle to move that one loop point — handles win the press
+that lands on them, so tuning an edge never starts a new region.
+
+Panning is SHIFT: SHIFT-drag on the waveform, SHIFT-scroll, or the middle
+button. It also has a home of its own — while zoomed, the track's row lights the
+part of the file in view on its bottom rule, and dragging that row scrolls the
+panel. The waveform is for choosing, the strip is for navigating. Scroll zooms
+around the pointer, and double click loops the whole file.
+
+Zooming changes nothing you hear and sends nothing to the engine. The arrow keys
+nudge the aimed point by one pixel of what you are looking at, so they get finer
+as you zoom in — at full zoom, one sample; after a sweep they aim at the end you
+swept to. If the loop runs past an edge of the view, that edge of the panel
+lights.
 
 `9` and `0` sit beside `-` and `=` so fitting and zooming are one run of four
 keys next to the loop keys `5`–`8`. `F` and `L`, the obvious letters, were
@@ -248,9 +259,9 @@ PYTHONPATH=.pylibs python3 -m tests     # with the vendored dependencies
 python3 -m tests                        # with installed ones
 ```
 
-389 checks in 16 files, about 40 seconds on the machine they were written on —
-half of that the browser file, which is the only one that starts a server and
-drives a real page.
+415 checks in 16 files, about 50 seconds on the machine they were written on —
+more than half of that the browser file, which is the only one that starts a
+server and drives a real page.
 Each file runs in its own process and prints PASS, FAIL or SKIP for every check,
 and the summary names every SKIP, so a skipped check cannot quietly become a
 permanent one. No sound card is needed — everything runs through the offline
@@ -269,7 +280,10 @@ The panel's own gestures are tested in a browser — headless, against a panel
 server on the null backend, so no sound card and no display. `test_panel.py`
 presses ASSIGN and a key cap, drags a loop point, arms MAP and calls it off with
 Esc, clears a key, loads a file onto a track, and asserts what the key slots
-hold afterwards. It runs the stillness probe as a check, and hooks
+hold afterwards. It sweeps the waveform at three zoom levels and checks the
+region in samples against the panel's own arithmetic — a pixel reaching engine
+state as a sample is the failure mode there — and checks that a click, a press
+that barely travels, a pan and a minimap drag all leave a region alone. It runs the stillness probe as a check, and hooks
 `WebSocket.send` to prove the panel paints its own feedback before the socket
 carries the press. Every bug that reached Ivan across three work orders was a
 gesture the Python suite could not send: a mode button that replaced sixteen
@@ -562,7 +576,7 @@ a silent failure you can see is the part worth having first.
 
 ## Traps
 
-Fourteen things that looked like they worked. Each cost real time, and each
+Fifteen things that looked like they worked. Each cost real time, and each
 produces a confident wrong answer rather than an error, which is why they are
 written down rather than left in a commit message.
 
@@ -706,6 +720,16 @@ else. *A control does one thing, and its name is that thing. Test through the
 messages the UI actually sends — `tests/test_panel_flow.py` now asserts that
 every op the panel can send is one the app routes, and that the single remap
 sender carries its confirmation.*
+
+**A gesture quietly changed hands.** Zoom needed a way to scroll, and plain
+drag on the waveform was free-looking, so it went to panning and region
+selection moved to SHIFT-drag. Both gestures still worked, every test passed,
+and the panel had taken the thing done every few seconds and given it to the
+thing done every few minutes — the same shape as the mode button above, one
+control with two claims on it. It survived three work orders because a test
+that drives the new binding can never notice that it is the wrong one. *When a
+gesture has to move, ask what reaches for it most often. Panning got a place of
+its own — the overview strip — rather than a place it had to share.*
 
 ## The audio graph underneath
 

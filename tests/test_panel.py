@@ -124,6 +124,10 @@ window.__sent = [];
              ? document.querySelector('[data-act="run"]').getAttribute('aria-pressed') : null,
         pad0: pad ? pad.className : '',
         line: (document.querySelector('#session-line') || {}).textContent || '',
+        win: (document.querySelector('#w-in') || {}).textContent || '',
+        wout: (document.querySelector('#w-out') || {}).textContent || '',
+        hand: (typeof dragLoop !== 'undefined' && dragLoop)
+              ? [dragLoop.ls, dragLoop.le] : null,
       });
     } catch (e) { /* the hook must never break the panel */ }
     return real.call(this, data);
@@ -240,21 +244,75 @@ def closed(page):
     page.wait_for_timeout(320)                   # the slide, then it stops intercepting
 
 
-def drag(page, sel, x0, x1, y=None, shift=False):
+def drag(page, sel, x0, x1, y=None, shift=False, button="left"):
+    """Press, travel, release — and hand back the two client x it really used,
+    because that is what the panel's own arithmetic sees. A synthetic clientX is
+    a whole number, so a check that recomputes from x0 would be comparing
+    against a coordinate the browser never sent."""
     box = page.locator(sel).bounding_box()
     yy = box["y"] + (y if y is not None else box["height"] / 2)
-    page.mouse.move(round(box["x"] + x0), round(yy))
+    cx0 = round(box["x"] + x0)
+    cx1 = round(box["x"] + x1)
+    page.mouse.move(cx0, round(yy))
     if shift:
         page.keyboard.down("Shift")
-    page.mouse.down()
+    page.mouse.down(button=button)
     for step in (0.35, 0.7, 1.0):
         page.mouse.move(round(box["x"] + x0 + (x1 - x0) * step), round(yy))
         page.wait_for_timeout(20)
-    page.mouse.up()
+    page.mouse.up(button=button)
     if shift:
         page.keyboard.up("Shift")
     page.wait_for_timeout(120)
     paint(page)
+    return cx0, cx1
+
+
+def focus_track(page, i):
+    """Press the row's name, not its envelope: the envelope is a scroll handle
+    now, and this is setting up a check, not the check. Already focused, press
+    nothing — two presses on one row inside the double-click window launch it."""
+    if page.evaluate("k => focusKind === 'track' && focus === k", i):
+        return
+    page.click("#strips .strip:nth-of-type(%d) .c-name" % (i + 1))
+    paint(page)
+
+
+def landed(page):
+    """Wait for the engine to echo the region the hand painted — the panel holds
+    its own version until it does, so reading S before that reads the old one."""
+    page.wait_for_function("dragLoop === null", timeout=10000)
+    paint(page)
+
+
+def region(page):
+    return page.evaluate("[S.tracks[0].ls, S.tracks[0].le]")
+
+
+def whole_loop(page):
+    """Loop the whole file first, so both handles sit at the panel's edges and
+    a sweep started in the middle cannot land on one — handles win that press,
+    which is the rule, and a check that trips over it is testing the wrong
+    thing. Double click is the panel's own gesture for it."""
+    page.dblclick("#wcanvas")
+    landed(page)
+
+
+def view(page):
+    return page.evaluate("() => { const v = viewOf(subject()); return [v.vs, v.ve]; }")
+
+
+def swept(page, cx0, cx1):
+    """What the region SHOULD be: the samples under those two client pixels,
+    through the view that is showing, by the panel's own published arithmetic.
+    An exact comparison — a pixel that reached engine state as though it were a
+    sample shows up here as a wrong number, not as a near miss."""
+    return page.evaluate("""([a, b]) => {
+      const r = document.querySelector('#wcanvas').getBoundingClientRect();
+      const t = subject(), v = viewOf(t);
+      return View.sweep(View.xToFrame(a - r.left, r.width, v, t.frames),
+                        View.xToFrame(b - r.left, r.width, v, t.frames), t.frames);
+    }""", [cx0, cx1])
 
 
 # ── the gestures that change what a key holds ────────────────────────────────
@@ -264,9 +322,9 @@ def t_assign_keeps_what_the_key_was_given(page):
     box = page.locator("#wcanvas").bounding_box()
     frames = page.evaluate("S.tracks[0].frames")
     x = lambda f: round(box["width"] * f / frames)
-    drag(page, "#wcanvas", x(46451), x(92902), shift=True)
+    drag(page, "#wcanvas", x(46451), x(92902))
     region = page.evaluate("[S.tracks[0].ls, S.tracks[0].le]")
-    check("a shift-drag on the waveform sets the track's region by hand",
+    check("a drag across the waveform sets the track's region by hand",
           region[0] > 40000 and region[1] - region[0] > 30000, str(region))
 
     taken = page.evaluate("S.pads[0].loaded")
@@ -420,7 +478,7 @@ def t_a_dragged_region_stays_where_it_was_put(page):
     box = page.locator("#wcanvas").bounding_box()
     frames = page.evaluate("S.tracks[0].frames")
     x = lambda f: round(box["width"] * f / frames)
-    drag(page, "#wcanvas", x(20000), x(120000), shift=True)
+    drag(page, "#wcanvas", x(20000), x(120000))
     first = page.evaluate("[S.tracks[0].ls, S.tracks[0].le]")
     drag(page, "#wcanvas", x(first[0]), x(60000))          # drag the IN handle
     landed = page.evaluate("[S.tracks[0].ls, S.tracks[0].le]")
@@ -446,6 +504,200 @@ def t_a_dragged_region_stays_where_it_was_put(page):
           page.evaluate("[S.pads[7].ls, S.pads[7].le]") == put and put != before
           and abs(put[0] - want) < 3000, "%s -> %s, wanted %d" % (before, put, want))
     toggle(page, "editkeys", False)
+
+
+# ── work order 10: the sweep, and what must not disturb it ───────────────────
+def t_a_sweep_sets_the_loop_at_every_zoom(page):
+    """The gesture Ivan reaches for constantly: press, drag, release.
+
+    Checked in samples against the panel's own published arithmetic, not
+    against a tolerance — a pixel that reaches engine state as though it were a
+    sample is the failure mode here, and at the whole file one pixel is a
+    thousand samples, so a loose check would not see it."""
+    closed(page)
+    toggle(page, "editkeys", False)
+    focus_track(page, 0)
+    for zooms, where in ((0, "the whole file"), (4, "zoomed in"), (9, "zoomed hard")):
+        whole_file(page)
+        whole_loop(page)
+        for _ in range(zooms):
+            page.keyboard.press("Equal")
+        page.wait_for_timeout(120)
+        if zooms:
+            drag(page, "#wcanvas", 620, 330, shift=True)     # and scrolled off centre
+        cx0, cx1 = drag(page, "#wcanvas", 180, 760)
+        landed(page)
+        want = swept(page, cx0, cx1)
+        check("a sweep sets the samples under the pointer, at %s" % where,
+              region(page) == want, "%s wanted %s" % (region(page), want))
+
+    whole_file(page)
+    whole_loop(page)
+    page.evaluate("window.__sent = []")
+    drag(page, "#wcanvas", 200, 640)
+    landed(page)
+    forwards = region(page)
+    late = []
+    for msg in page.evaluate("window.__sent"):
+        sent = json.loads(msg["data"])
+        if sent.get("op") != "track.loop":
+            continue
+        shown = [int(msg["win"].replace(",", "")), int(msg["wout"].replace(",", ""))]
+        if shown != [sent["ls"], sent["le"]] or msg["hand"] != shown:
+            late.append("%s sent, %s on screen, %s held" % (shown, [sent["ls"], sent["le"]],
+                                                            msg["hand"]))
+    check("every step of a sweep is on screen before the socket carries it",
+          not late, "; ".join(late[:2]) or "%d messages" % len(page.evaluate("window.__sent")))
+    whole_loop(page)                      # the handles back to the edges
+    drag(page, "#wcanvas", 640, 200)
+    landed(page)
+    check("a backwards sweep gives the same region as a forwards one",
+          region(page) == forwards, "%s then %s" % (forwards, region(page)))
+
+
+def t_a_click_is_not_a_sweep(page):
+    """A region is hand-tuned work. The MAP wipe was the same class of harm:
+    something destructive on a gesture the hand makes by accident."""
+    closed(page)
+    focus_track(page, 0)
+    whole_file(page)
+    whole_loop(page)
+    drag(page, "#wcanvas", 200, 700)
+    landed(page)
+    held = region(page)
+    box = page.locator("#wcanvas").bounding_box()
+    y = round(box["y"] + box["height"] / 2)
+
+    page.mouse.click(round(box["x"]) + 450, y)         # inside the region, on no handle
+    page.wait_for_timeout(250)
+    paint(page)
+    check("a click without a drag leaves the region exactly as it was",
+          region(page) == held, "%s -> %s" % (held, region(page)))
+
+    page.mouse.move(round(box["x"]) + 300, y)
+    page.mouse.down()
+    page.mouse.move(round(box["x"]) + 302, y)          # under the threshold
+    page.mouse.up()
+    page.wait_for_timeout(250)
+    paint(page)
+    check("nor does a press that barely travels, at either end of it",
+          region(page) == held, "%s -> %s" % (held, region(page)))
+
+    xin = page.evaluate("""() => {
+      const t = subject(), r = document.querySelector('#wcanvas').getBoundingClientRect();
+      return View.frameToX(t.ls, r.width, viewOf(t)); }""")
+    drag(page, "#wcanvas", round(xin), round(xin) + 150)
+    landed(page)
+    now = region(page)
+    check("a press that lands on a handle moves that handle and starts no region",
+          now[1] == held[1] and now[0] > held[0], "%s -> %s" % (held, now))
+
+
+def t_panning_leaves_the_region_alone(page):
+    closed(page)
+    focus_track(page, 0)
+    whole_file(page)
+    whole_loop(page)
+    drag(page, "#wcanvas", 200, 700)
+    landed(page)
+    held = region(page)
+
+    def zoomed_in():
+        whole_file(page)
+        for _ in range(4):
+            page.keyboard.press("Equal")
+        page.wait_for_timeout(120)
+        paint(page)
+        return view(page)
+
+    was = zoomed_in()
+    drag(page, "#wcanvas", 620, 300, shift=True)
+    check("SHIFT-drag pans the waveform and moves no loop point",
+          view(page) != was and region(page) == held,
+          "%s -> %s, region %s" % (was, view(page), region(page)))
+
+    was = zoomed_in()
+    drag(page, "#wcanvas", 300, 640, button="middle")
+    check("the middle button pans it too, for the hand that expects it",
+          view(page) != was and region(page) == held,
+          "%s -> %s" % (was, view(page)))
+
+    was = zoomed_in()
+    strip = "#strips .strip:nth-of-type(1) .c-wave"
+    drag(page, strip, 25, 70)
+    check("dragging the lit span on the track's row scrolls the panel",
+          view(page) != was and region(page) == held,
+          "%s -> %s" % (was, view(page)))
+
+    playing = page.evaluate("!!S.tracks[0].playing")
+    drag(page, strip, 70, 30)
+    drag(page, strip, 30, 65)                 # twice, inside the double-click window
+    check("and scrolling a row twice over does not launch it",
+          page.evaluate("!!S.tracks[0].playing") == playing and region(page) == held,
+          "playing %s" % page.evaluate("S.tracks[0].playing"))
+
+
+def t_a_sweep_edits_whatever_the_panel_is_showing(page):
+    closed(page)
+    focus_track(page, 0)
+    whole_file(page)
+    whole_loop(page)
+    drag(page, "#wcanvas", 150, 800)
+    landed(page)
+    on_the_track = region(page)
+
+    toggle(page, "editkeys", True)
+    page.click("#padgrid .pad >> nth=5")
+    paint(page)
+    if not page.evaluate("S.pads[5].loaded"):
+        check("key 6 holds audio to sweep", False, "the key is empty")
+        toggle(page, "editkeys", False)
+        return
+    whole_file(page)
+    whole_loop(page)
+    before = page.evaluate("[S.pads[5].ls, S.pads[5].le]")
+    cx0, cx1 = drag(page, "#wcanvas", 240, 690)
+    landed(page)
+    want = swept(page, cx0, cx1)
+    now = page.evaluate("[S.pads[5].ls, S.pads[5].le]")
+    check("sweeping while a key is focused sets that key's region, by sample",
+          now == want and now != before, "%s -> %s wanted %s" % (before, now, want))
+    check("and the track the panel came from keeps the region it had",
+          region(page) == on_the_track, str(region(page)))
+    toggle(page, "editkeys", False)
+
+
+def t_the_view_gestures_move_nothing(page):
+    closed(page)
+    toggle(page, "editkeys", False)
+    focus_track(page, 0)
+    whole_file(page)
+    whole_loop(page)
+    page.evaluate("window.__mark()")
+    drag(page, "#wcanvas", 260, 720)
+    landed(page)
+    for _ in range(3):
+        page.keyboard.press("Equal")
+    page.wait_for_timeout(120)
+    drag(page, "#wcanvas", 700, 350, shift=True)
+    drag(page, "#strips .strip:nth-of-type(1) .c-wave", 30, 70)
+    page.keyboard.press("Digit9")                        # fit the loop
+    page.wait_for_timeout(120)
+    page.keyboard.press("Digit0")                        # fit the file
+    page.wait_for_timeout(120)
+    paint(page)
+    moved = page.evaluate("s => window.__moved(s)", [])
+    check("sweeping, panning, zooming and fitting move nothing on the panel",
+          moved == [], "; ".join(moved[:3]))
+
+    other = page.evaluate("S.tracks.findIndex((t, k) => k > 0 && t.loaded)")
+    skip = ["DIV#focusbar"] if other > 0 else ["DIV#focusbar", "DIV#w-empty"]
+    page.evaluate("window.__mark()")
+    focus_track(page, other if other > 0 else 1)
+    moved = page.evaluate("s => window.__moved(s)", skip)
+    check("changing focus moves nothing but the bar that marks it",
+          moved == [], "; ".join(moved[:3]))
+    focus_track(page, 0)
 
 
 if __name__ == "__main__":
@@ -474,7 +726,12 @@ if __name__ == "__main__":
                        t_clearing_a_key,
                        t_feedback_lands_before_the_send,
                        t_nothing_moves_that_was_not_asked_to,
-                       t_a_dragged_region_stays_where_it_was_put):
+                       t_a_dragged_region_stays_where_it_was_put,
+                       t_a_sweep_sets_the_loop_at_every_zoom,
+                       t_a_click_is_not_a_sweep,
+                       t_panning_leaves_the_region_alone,
+                       t_a_sweep_edits_whatever_the_panel_is_showing,
+                       t_the_view_gestures_move_nothing):
                 try:
                     fn(page)
                 except Exception as exc:

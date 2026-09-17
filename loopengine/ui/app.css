@@ -280,6 +280,8 @@ body.helping [data-help] { opacity: 1; }
    where you happen to be looking is none of those. Ink also keeps it apart
    from the accent loop drawn in this same envelope. Unlit at the whole file,
    where it would say nothing. Floor and clamp as on the keys. */
+/* Zoomed, the span is a handle: the panel scrolls with it. */
+.c-wave.zoomed { cursor: grab; }
 .c-wave.zoomed::after {
   content: ""; position: absolute; bottom: 0;
   left: min(var(--vs, 0%), calc(100% - var(--s2)));

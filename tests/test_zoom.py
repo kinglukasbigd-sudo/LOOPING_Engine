@@ -299,6 +299,36 @@ def t_view_maths_under_node():
         return
     for row in rows:
         check("view: " + row[1], row[0] == "PASS", row[2] if len(row) > 2 else "")
+    t_a_swept_region_is_one_the_engine_keeps(r.stdout)
+
+
+def t_a_swept_region_is_one_the_engine_keeps(stdout):
+    """Work order 10: the panel paints a swept region before it sends it, so a
+    region the engine would rewrite is a region the panel painted wrongly.
+    view.js works out the two ends; the real Track decides what it keeps. The
+    two rules are written twice, in two languages, so they are compared here
+    rather than trusted."""
+    sweeps = []
+    for line in stdout.splitlines():
+        if line.startswith("DATA\tsweep\t"):
+            sweeps = json.loads(line.split("\t", 2)[2])
+    if not sweeps:
+        check("view: the swept regions reached this check", False,
+              "view_check.js printed no sweep data")
+        return
+    frames = sweeps[0][2]
+    e = Engine(samplerate=SR, blocksize=256, offline=True)
+    e.post("track.load", i=0, buf=np.zeros((frames, 2), dtype=np.float32), sr=SR,
+           name="sweep", path="", bpm=0.0, conf=0.0, slices=np.zeros(0, dtype=np.int64))
+    e.render_offline(256)
+    t = e.tracks[0]
+    bad = []
+    for ls, le, _n in sweeps:
+        t.set_loop(ls, le)
+        if (t.loop_start, t.loop_end) != (ls, le):
+            bad.append("%d..%d became %d..%d" % (ls, le, t.loop_start, t.loop_end))
+    check("view: every region a sweep paints is one the engine keeps unchanged",
+          not bad, "; ".join(bad[:3]) or "%d regions" % len(sweeps))
 
 
 if __name__ == "__main__":
