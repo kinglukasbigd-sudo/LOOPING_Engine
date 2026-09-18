@@ -190,7 +190,16 @@ body.helping [data-help] { opacity: 1; }
   background: var(--fg); border: 0; border-radius: var(--r);
 }
 
-.pending-line { font-size: var(--t1); line-height: var(--lh1); margin-top: var(--s2); opacity: var(--dim2); }
+/* The rail's three lines — what is queued, the session, the take — are reserved
+   boxes, not free text. Each is one line high and clips: a longer reading, like
+   the device fault or a take offering itself a track, would otherwise wrap and
+   push every block under it down the rail. Nothing on this panel moves because
+   a string got longer. */
+.pending-line {
+  font-size: var(--t1); line-height: var(--lh1); height: var(--lh1);
+  margin-top: var(--s2); opacity: var(--dim2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .pending-line.armed { opacity: 1; color: var(--accent); }  /* ACCENT 2 — queued */
 /* The take. Its state and its length each sit in a box sized for their longest
    reading, so ARMED becoming REC, or 09:59 becoming 10:00, moves nothing. */

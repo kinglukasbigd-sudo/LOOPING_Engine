@@ -193,8 +193,11 @@ class App:
         rp = os.path.realpath(p)
         if rp in self._granted:
             return True
+        # Takes are readable because this run wrote them: a recording offered to
+        # a track has to be loadable whatever --root says, or REC writes files
+        # the panel that made them is not allowed to open.
         return any(rp == r or rp.startswith(r + os.sep)
-                   for r in self.roots + [self.inbox])
+                   for r in self.roots + [self.inbox, self.recordings_dir])
 
     # -- native dialog -----------------------------------------------------
     def pick_backend(self):

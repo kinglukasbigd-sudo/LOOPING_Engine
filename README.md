@@ -192,6 +192,17 @@ second they were armed, in `~/.loopengine/recordings/` (`--recordings DIR` for
 another folder). A take never writes over a file that is already there, and the
 inspector names the file when a take ends.
 
+**A finished take asks where it goes.** The thing wanted next is nearly always
+to play it, so the panel offers it a track instead of leaving it to be found
+again through LOAD: the rail's record line goes accent and reads `click a track
+to load it`, and the take lands on whichever row is pressed, or on the row the
+focus bar is on if ENTER is pressed instead. Esc leaves it on disk, and says
+where. The offer waits — no clock, like every other question this panel asks —
+and starting another take replaces it. To put a take on a key, load it onto a
+track and ASSIGN it from there, which is the same path as any other file. A take
+that rolled over into parts offers its first part and says so. Takes can always
+be read back, whatever `--root` says, because this run is what wrote them.
+
 The audio thread never touches the disk. The callback copies each block into a
 ring allocated once, as the scope does, and a writer thread drains the ring into
 the file. The ring holds 30 seconds, so the disk can stall that long without
@@ -261,7 +272,7 @@ PYTHONPATH=.pylibs python3 -m tests     # with the vendored dependencies
 python3 -m tests                        # with installed ones
 ```
 
-416 checks in 16 files, about 50 seconds on the machine they were written on —
+423 checks in 16 files, about 58 seconds on the machine they were written on —
 more than half of that the browser file, which is the only one that starts a
 server and drives a real page.
 Each file runs in its own process and prints PASS, FAIL or SKIP for every check,

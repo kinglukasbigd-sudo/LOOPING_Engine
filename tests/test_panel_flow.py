@@ -370,6 +370,45 @@ def t_keys_survive_save_restart_load_and_a_later_file_load():
         shutil.rmtree(d, ignore_errors=True)
 
 
+def t_a_take_can_be_loaded_back_onto_a_track():
+    """A finished take offers itself a track, so the panel has to be able to
+    read what REC just wrote — whatever --root says. Everything else outside
+    the roots stays refused."""
+    d = base_dir()
+    try:
+        takes = os.path.join(d, "elsewhere", "takes")
+        os.makedirs(takes)
+        e = Engine(samplerate=SR, blocksize=B, offline=True)
+        a = App(e, roots=[os.path.join(d, "music")],
+                inbox=os.path.join(d, ".inbox"),
+                sessions_dir=os.path.join(d, "sessions"),
+                session_key=os.path.join(d, "cfg", "session.key"),
+                recordings_dir=takes)
+        a.hub = types.SimpleNamespace(text=lambda *x: None, peaks=lambda *x, **k: None,
+                                      pad_peaks=lambda *x, **k: None,
+                                      broadcast=lambda *x: None)
+        take = tone(os.path.join(takes, "rec-20260917-203500.wav"), 0.4, 440)
+        other = tone(os.path.join(d, "not-a-take.wav"), 0.4, 550)
+
+        a.handle({"op": "load", "i": 0, "path": take})
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < 15 and e.tracks[0].src is None:
+            e.render_offline(B)
+            time.sleep(0.01)
+        check("a take loads onto a track though its folder is outside --root",
+              e.tracks[0].name == os.path.basename(take),
+              e.tracks[0].name or a.meta.get(0, {}).get("error", "")[:60])
+
+        a.handle({"op": "load", "i": 1, "path": other})
+        e.render_offline(B)
+        check("a file that is neither a take nor inside a root is still refused",
+              e.tracks[1].src is None
+              and "outside the folders" in a.meta.get(1, {}).get("error", ""),
+              a.meta.get(1, {}).get("error", "")[:60])
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 if __name__ == "__main__":
     for fn in (t_every_op_the_panel_sends_is_handled,
                t_the_segment_says_whose_mode_it_shows,
@@ -380,7 +419,8 @@ if __name__ == "__main__":
                t_map_asks_before_it_replaces_assigned_keys,
                t_assigning_over_a_key_asks,
                t_clearing_a_key,
-               t_keys_survive_save_restart_load_and_a_later_file_load):
+               t_keys_survive_save_restart_load_and_a_later_file_load,
+               t_a_take_can_be_loaded_back_onto_a_track):
         try:
             fn()
         except Exception as exc:

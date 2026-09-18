@@ -83,6 +83,10 @@ let helpMode = false;
 let focusKind = 'track';   // 'track' | 'key' — what the waveform panel edits
 let focusKey = 0;          // which key, when focusKind is 'key'
 let assignArmed = false;   // next key pressed takes the focused track's region
+/* A take that has just been written, waiting to be told where it goes. Armed,
+   with no clock, like every other question this panel asks: it is the file the
+   next track press loads, and Esc leaves it on disk. */
+let takeReady = null;
 let editKeys = false;      // clicking a pad focuses it instead of firing it
 const padPeaks = {};       // pad index -> its own envelope
 /* What the waveform panel is looking at: one view per track and per key,
@@ -571,6 +575,7 @@ function buildStrips(n) {
     el.addEventListener('mousedown', (e) => {
       if (e.target.closest('button, input')) return;
       setFocus(i);
+      if (takeReady) return loadTake(i);   // the take is waiting to be told where
       // Scrolling the view is not a transport gesture: pressing again to carry
       // on panning must not read as a double click and launch the track.
       if (startMiniPan(e, i)) return;
@@ -750,6 +755,7 @@ function onSessionLoaded(msg) {
    and the clock is always eight characters, so nothing beside them moves. */
 const REC_WORD = { idle: 'OFF', armed: 'ARMED', recording: 'REC', stopping: 'SAVING' };
 function recLine(state, take) {
+  if (takeReady) return 'click a track to load it';
   if (state === 'armed') return 'armed — starts with RUN';
   if (state === 'recording') {
     if (S && S.audio && S.audio.stalled) return 'the device stopped — the take is not growing';
@@ -777,8 +783,24 @@ function paintRec(state, take) {
   const clock = $('#rec-time');
   setText(clock, View.clock(secs));
   clock.classList.toggle('on', state === 'recording');
-  setText($('#rec-line'), recLine(state, take));
+  const line = $('#rec-line');
+  setText(line, recLine(state, take));
+  line.classList.toggle('armed', !!takeReady);   // ACCENT 2: it is waiting on you
 }
+/* The take has somewhere to go. Paint the line first, as everywhere else; the
+   row itself says the rest once the file has been read. */
+function loadTake(i) {
+  const t = takeReady;
+  takeReady = null;
+  localError = `Loading ${t.name} onto track ${i + 1}.`;
+  send({ op: 'load', i, path: t.path });
+}
+function cancelTake() {
+  if (!takeReady) return;
+  localError = `${takeReady.name} is still in ${takeReady.dir}. LOAD opens it later.`;
+  takeReady = null;
+}
+
 function onRecordDone(msg) {
   OPT.delete('recState');
   if (msg.disarmed) return;
@@ -798,7 +820,21 @@ function onRecordDone(msg) {
     : '';
   const dead = msg.stalled
     ? ' The device stopped asking for sound while it ran, so the take is shorter than the clock.' : '';
-  localError = `Recorded ${View.clock(msg.seconds)} in ${msg.dir} — ${where}.${lost}${xr}${dead}`;
+  /* WHERE DOES IT GO. A take is a file the moment it is written, and the thing
+     wanted next is nearly always to play it — so the panel asks, instead of
+     leaving it to be found again through LOAD. The first part only when a long
+     take rolled over, and it says so. */
+  if (msg.files && msg.files.length) {
+    takeReady = { path: msg.files[0], name: names[0], dir: msg.dir };
+  }
+  const part = names.length > 1 ? ' Its first part' : ' It';
+  // The focus bar already says which row ENTER would use, and Tab can move it
+  // after this sentence is written — so it points at the bar rather than naming
+  // a number that goes stale.
+  const put = takeReady
+    ? `${part} can go straight onto a track: press a row, or ENTER for the row the`
+      + ' focus bar is on. Esc leaves it on disk.' : '';
+  localError = `Recorded ${View.clock(msg.seconds)} in ${msg.dir} — ${where}.${lost}${xr}${dead}${put}`;
 }
 
 function onPicked(msg) {
@@ -1688,6 +1724,7 @@ const ACT = {
   },
   open:    () => openSessions(),
   rec:     () => {
+    cancelTake();                     // a new take replaces the offer of the last
     const take = S && S.record;
     const now = settled('recState', take ? take.state : 'idle');
     const next = now === 'idle' ? (settled('transport', !!(S && S.playing)) ? 'recording' : 'armed')
@@ -1828,8 +1865,12 @@ window.addEventListener('keydown', (e) => {
       setFocus((focus + (e.shiftKey ? -1 : 1) + n) % n);
       break;
     }
+    case 'Enter':
+      if (takeReady) { e.preventDefault(); loadTake(focus); }
+      break;
     case 'Escape':
-      if (mapArmed || assignConfirm >= 0) { cancelMap(); cancelAssign(); }
+      if (takeReady) { cancelTake(); }
+      else if (mapArmed || assignConfirm >= 0) { cancelMap(); cancelAssign(); }
       else if (helpMode) ACT.help();
       else if (browserOpen()) closeBrowser();
       else send({ op: 'panic' });

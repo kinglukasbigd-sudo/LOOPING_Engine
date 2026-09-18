@@ -687,6 +687,66 @@ def t_a_sweep_edits_whatever_the_panel_is_showing(page):
     toggle(page, "editkeys", False)
 
 
+def record_a_take(page):
+    """RUN, REC, a moment, REC — a take of the master output, through the
+    panel's own buttons."""
+    if page.get_attribute('[data-act="run"]', "aria-pressed") != "true":
+        page.click('[data-act="run"]')
+        page.wait_for_function("S.playing", timeout=10000)
+    page.click('[data-act="rec"]')
+    page.wait_for_function("S.record && S.record.state === 'recording'", timeout=15000)
+    page.wait_for_timeout(600)
+    page.click('[data-act="rec"]')
+    page.wait_for_function("typeof takeReady !== 'undefined' && takeReady !== null",
+                           timeout=20000)
+    paint(page)
+
+
+def t_a_finished_take_asks_where_it_goes(page):
+    closed(page)
+    toggle(page, "editkeys", False)
+    focus_track(page, 0)
+    before = [page.evaluate("i => S.tracks[i].name || ''", i) for i in range(4)]
+    page.evaluate("window.__mark()")
+    record_a_take(page)
+    moved = page.evaluate("s => window.__moved(s)", ["DIV#i-error"])
+    check("a finished take asks where it goes, and loads nothing on its own",
+          page.evaluate("recLine(S.record.state, S.record)") == "click a track to load it"
+          and "armed" in page.evaluate("document.querySelector('#rec-line').className")
+          and [page.evaluate("i => S.tracks[i].name || ''", i) for i in range(4)] == before,
+          page.evaluate("recLine(S.record.state, S.record)"))
+    check("and asking moves nothing on the panel", moved == [], "; ".join(moved[:3]))
+
+    page.click("#strips .strip:nth-of-type(3) .c-name")
+    page.wait_for_function("S.tracks[2].loaded && /^rec-/.test(S.tracks[2].name)",
+                           timeout=20000)
+    paint(page)
+    check("pressing a track row loads the take onto that track",
+          page.evaluate("takeReady") is None and track(page, 2).startswith("rec-"),
+          track(page, 2))
+
+    focus_track(page, 3)
+    record_a_take(page)
+    page.keyboard.press("Enter")
+    page.wait_for_function("S.tracks[3].loaded && /^rec-/.test(S.tracks[3].name)",
+                           timeout=20000)
+    paint(page)
+    check("ENTER puts it on the row the focus bar is on",
+          page.evaluate("takeReady") is None and track(page, 3).startswith("rec-"),
+          track(page, 3))
+
+    record_a_take(page)
+    page.keyboard.press("Escape")
+    paint(page)
+    check("Esc leaves the take on disk and loads it nowhere",
+          page.evaluate("takeReady") is None
+          and not page.evaluate("/^rec-/.test(S.tracks[1].name || '')")
+          and "still in" in note(page), note(page)[:60])
+    page.click('[data-act="run"]')
+    page.wait_for_function("!S.playing", timeout=10000)
+    paint(page)
+
+
 def t_the_view_gestures_move_nothing(page):
     closed(page)
     toggle(page, "editkeys", False)
@@ -752,7 +812,8 @@ if __name__ == "__main__":
                        t_a_click_is_not_a_sweep,
                        t_panning_leaves_the_region_alone,
                        t_a_sweep_edits_whatever_the_panel_is_showing,
-                       t_the_view_gestures_move_nothing):
+                       t_the_view_gestures_move_nothing,
+                       t_a_finished_take_asks_where_it_goes):
                 try:
                     fn(page)
                 except Exception as exc:
