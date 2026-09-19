@@ -125,6 +125,7 @@ window.__sent = [];
         pad0: pad ? pad.className : '',
         line: (document.querySelector('#session-line') || {}).textContent || '',
         roll: (document.querySelector('#roll-line') || {}).textContent || '',
+        fx: (document.querySelector('#fx-line') || {}).textContent || '',
         win: (document.querySelector('#w-in') || {}).textContent || '',
         wout: (document.querySelector('#w-out') || {}).textContent || '',
         hand: (typeof dragLoop !== 'undefined' && dragLoop)
@@ -872,6 +873,28 @@ def t_a_cue_is_set_then_jumped_then_cleared(page):
           lit() == "false" and page.evaluate("S.tracks[0].cues.filter(c => c >= 0).length") == 0)
 
 
+def t_the_echo_is_held_not_clicked(page):
+    closed(page)
+    page.evaluate("window.__sent = []")
+    page.keyboard.down("k")
+    page.wait_for_timeout(150)
+    on = [x for x in page.evaluate("window.__sent") if "master.echo" in x["data"]]
+    check("holding K turns the echo on, and the box says so before the send",
+          len(on) == 1 and '"on":true' in on[0]["data"].replace(" ", "")
+          and on[0]["fx"] == "echo", str(on[:1])[:90])
+    page.keyboard.down("k")                       # the key repeating is not a second press
+    page.wait_for_timeout(120)
+    check("and holding it down is one press, however long it is held",
+          len([x for x in page.evaluate("window.__sent") if "master.echo" in x["data"]]) == 1)
+    page.keyboard.up("k")
+    page.wait_for_function("S.echo === false", timeout=10000)
+    paint(page)
+    check("letting go returns it clean, and the box goes back to waiting",
+          page.evaluate("document.querySelector('#fx-line').textContent") == "hold K"
+          and page.evaluate("document.querySelector('#fx-echo').getAttribute('aria-pressed')")
+              == "false")
+
+
 if __name__ == "__main__":
     base = tempfile.mkdtemp(prefix="le-panel-ui-")
     server = Panel(base)
@@ -897,6 +920,7 @@ if __name__ == "__main__":
                        t_a_bank_switch_moves_the_address_not_the_audio,
                        t_a_roll_is_held_and_says_so_before_it_sends,
                        t_a_cue_is_set_then_jumped_then_cleared,
+                       t_the_echo_is_held_not_clicked,
                        t_map_asks_and_mode_is_only_a_mode,
                        t_clearing_a_key,
                        t_feedback_lands_before_the_send,

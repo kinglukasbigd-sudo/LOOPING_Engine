@@ -241,6 +241,22 @@ class Engine:
         self._held = [-1] * n_pads     # key position -> the slot it triggered
         self.voices = VoicePool(n_voices, blocksize)
 
+        # Hold-for-echo on the master bus. One ring, allocated once and long
+        # enough for a quarter beat at the slowest tempo the transport allows,
+        # and two scratch blocks so a pass needs nothing new. The delay is at
+        # least a block long, so the frames being read are never the frames
+        # being written and the whole block is one vectorised pass.
+        self.echo_on = False
+        self._echo = np.zeros((int(self.sr * 2), 2), dtype=np.float32)
+        self._echo_rd = np.zeros((blocksize, 2), dtype=np.float32)
+        self._echo_wr = np.zeros((blocksize, 2), dtype=np.float32)
+        self._echo_sc = np.zeros((blocksize, 2), dtype=np.float32)
+        self._echo_w = 0
+        self._echo_d = blocksize
+        self._echo_fb = 0.45
+        self._echo_feed = 0.0          # smoothed, so the feed never steps
+        self._echo_run = 0             # frames of ring left worth reading out
+
         self.memory_limit = memory_mb * 1048576 if memory_mb else 0
         self.master_gain = 0.70
         self._mg = 0.70
@@ -407,6 +423,9 @@ class Engine:
         if self.master_peak.max() > 0.999:
             self.clips += 1
 
+        if self.echo_on or self._echo_feed > 1e-4 or self._echo_run > 0:
+            self._echo_block(mix, frames)
+
         # Padé soft clip. Transparent under 0.7, firm above it, never folds.
         x2 = mix * mix
         np.multiply(mix, 27.0 + x2, out=outdata[:frames])
@@ -461,6 +480,70 @@ class Engine:
             t = tracks[k]
             if t.roll_armed and tr.frames_to_grid(t.roll_beats) == 0:
                 t.roll_begin(tr.spb, self.sr)
+
+    def _echo_block(self, mix, n):
+        """One tempo-synced repeat with feedback, in one pass over the block.
+
+        Hold feeds the line, release stops feeding it and what is already in
+        there rings out — which is why this keeps running for a while after the
+        key comes up, and why the tail is what decides when to stop calling it.
+        """
+        ring = self._echo
+        N = ring.shape[0]
+        w = self._echo_w
+        r = (w - self._echo_d) % N
+        rd = self._echo_rd[:n]
+        if r + n <= N:
+            rd[:] = ring[r:r + n]
+        else:
+            k = N - r
+            rd[:k] = ring[r:]
+            rd[k:] = ring[:n - k]
+
+        f0 = self._echo_feed
+        want = 1.0 if self.echo_on else 0.0
+        self._echo_feed = f0 + (want - f0) * min(1.0, n / (0.006 * self.sr))
+        sc = self._echo_sc[:n]
+        if f0 == self._echo_feed:
+            np.multiply(mix, f0, out=sc)          # settled: a scalar, no ramp
+        else:
+            ramp = self._k[:n] * (1.0 / n)
+            np.multiply(mix, (f0 + (self._echo_feed - f0) * ramp
+                              ).astype(np.float32)[:, None], out=sc)
+
+        # The repeat is heard at feedback level and goes back in at that level
+        # too, so the first one is already quieter than the source and each one
+        # after it is quieter again.
+        np.multiply(rd, self._echo_fb, out=rd)
+        wr = self._echo_wr[:n]
+        np.add(rd, sc, out=wr)
+        if w + n <= N:
+            ring[w:w + n] = wr
+        else:
+            k = N - w
+            ring[w:] = wr[:k]
+            ring[:n - k] = wr[k:]
+        self._echo_w = (w + n) % N
+        mix += rd
+        # How long the ring stays worth reading after the feed stops. Sixteen
+        # repeats at this feedback is under a millionth of what went in, and
+        # counting frames beats measuring a buffer the size of this one on the
+        # audio thread. Asking the block being written is not enough: the gap
+        # between the release and the next repeat is silent, and the echo would
+        # switch itself off in it with a repeat still in the line.
+        if self._echo_feed > 1e-4:
+            self._echo_run = 16 * self._echo_d
+        elif self._echo_run > 0:
+            self._echo_run -= n
+
+    def _echo_arm(self, on):
+        """The delay time is taken when the hold starts and kept until it ends:
+        a tempo change under a running echo would jump the read head, and that
+        is a click and a pitch step in the repeats."""
+        if on and not self.echo_on:
+            d = int(self.transport.spb * 0.25)
+            self._echo_d = max(self.blocksize, min(d, self._echo.shape[0] - 1))
+        self.echo_on = bool(on)
 
     def _render_span(self, out, n):
         if n <= 0:
@@ -865,6 +948,8 @@ class Engine:
             s = self._held[pos]
             self.voices.release_pad(self._pad_slot(kw) if s < 0 else s)
             self._held[pos] = -1
+        elif op == "master.echo":
+            self._echo_arm(bool(kw.get("on", False)))
         elif op == "track.cue.set":
             t = self._t(kw)
             if t:
@@ -900,6 +985,10 @@ class Engine:
             # ESC: the immediate cut. No fade, by design — it is the control
             # for when something has to be silent this block, clicks and all.
             self.voices.panic()
+            self.echo_on = False
+            self._echo_feed = 0.0
+            self._echo_run = 0
+            self._echo[:] = 0.0            # the tail is sound too, and this is ESC
             for t in self.tracks:
                 t.playing = t.stopping = False
                 t.roll_cancel()
@@ -1135,6 +1224,7 @@ class Engine:
             "pending_ms": round(self.transport.frames_to_boundary()
                                 / self.sr * 1000.0, 0) if self._q_n else 0,
             "master": round(self.master_gain, 3),
+            "echo": bool(self.echo_on),
             "mpeak": [round(float(self.master_peak[0]), 4),
                       round(float(self.master_peak[1]), 4)],
             "voices": self.voices.used(),
