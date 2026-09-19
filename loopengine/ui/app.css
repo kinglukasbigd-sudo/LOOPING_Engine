@@ -22,7 +22,7 @@ html, body {
   text-transform: uppercase;
   opacity: var(--dim1);
 }
-.legend.inline { opacity: var(--dim2); white-space: nowrap; }
+.legend.inline { opacity: var(--dim-text); white-space: nowrap; }
 /* Help text lands in cells that are already reserved. Clipping is deliberate:
    a longer string must never be able to reflow the grid. */
 [data-help] { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -103,7 +103,7 @@ body.helping [data-help] { opacity: 1; }
 .stat { display: flex; align-items: baseline; gap: var(--s2); white-space: nowrap; }
 .stat i {
   font-style: normal; font-family: var(--font-display);
-  font-size: var(--t1); letter-spacing: var(--tr-legend); opacity: var(--dim2);
+  font-size: var(--t1); letter-spacing: var(--tr-legend); opacity: var(--dim-text);
 }
 .stat b {
   font-weight: 500; font-size: var(--t2);
@@ -158,7 +158,7 @@ body.helping [data-help] { opacity: 1; }
 #master-db {
   font-size: var(--t4); line-height: var(--lh4); min-width: var(--w-mid);
 }
-.unit { font-size: var(--t1); opacity: var(--dim2); }
+.unit { font-size: var(--t1); opacity: var(--dim-text); }
 .val-row { display: flex; align-items: baseline; gap: var(--s3); margin: var(--s2) 0; }
 .val-row .tall { margin-left: auto; align-self: stretch; }
 
@@ -200,7 +200,7 @@ body.helping [data-help] { opacity: 1; }
    a string got longer. */
 .pending-line {
   font-size: var(--t1); line-height: var(--lh1); height: var(--lh1);
-  margin-top: var(--s2); opacity: var(--dim2);
+  margin-top: var(--s2); opacity: var(--dim-text);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .pending-line.armed { opacity: 1; color: var(--accent); }  /* ACCENT 2 — queued */
@@ -210,14 +210,14 @@ body.helping [data-help] { opacity: 1; }
 .rec-state {
   width: var(--w-recstate); flex: none;
   font-family: var(--font-display); font-size: var(--t1); line-height: var(--lh1);
-  letter-spacing: var(--tr-legend); text-transform: uppercase; opacity: var(--dim2);
+  letter-spacing: var(--tr-legend); text-transform: uppercase; opacity: var(--dim-text);
 }
 .rec-state.armed { opacity: 1; color: var(--accent); }  /* ACCENT 2 — queued: it starts with RUN */
 .rec-state.on { opacity: 1; }                           /* recording is ink: the pressed REC says it */
 .rec-time {
   width: var(--w-rectime); flex: none; margin-left: auto; text-align: right;
   font-size: var(--t3); line-height: var(--lh3);
-  font-variant-numeric: tabular-nums; opacity: var(--dim2);
+  font-variant-numeric: tabular-nums; opacity: var(--dim-text);
 }
 .rec-time.on { opacity: 1; }
 #rec-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -234,7 +234,7 @@ body.helping [data-help] { opacity: 1; }
 .mm-legend {
   display: flex; justify-content: space-around;
   font-family: var(--font-display); font-size: var(--t1);
-  letter-spacing: var(--tr-legend); opacity: var(--dim2); padding-top: var(--s1);
+  letter-spacing: var(--tr-legend); opacity: var(--dim-text); padding-top: var(--s1);
   text-indent: var(--optic-centre);
 }
 
@@ -263,7 +263,7 @@ body.helping [data-help] { opacity: 1; }
    that is about to happen — carried on the hairline the row already has, so
    nothing floats over the grid and no layer dims it. */
 .strip.awaiting { border-bottom-color: var(--accent); }
-.strip.empty-row .c-name { opacity: var(--dim2); }
+.strip.empty-row .c-name { opacity: var(--dim-text); }
 .strip.playing .c-n { opacity: 1; }
 .strip.fired { animation: fire var(--m-state) var(--ease); }
 /* A landed change is an event, not a movement: the row holds fully inverted,
@@ -275,7 +275,7 @@ body.helping [data-help] { opacity: 1; }
   72.01%, 100% { background: transparent; color: inherit; }
 }
 
-.c-n { font-family: var(--font-display); font-weight: 700; font-size: var(--t3); opacity: var(--dim2); }
+.c-n { font-family: var(--font-display); font-weight: 700; font-size: var(--t3); opacity: var(--dim-text); }
 .c-name { font-size: var(--t3); line-height: var(--lh3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .c-bpm, .c-len { font-size: var(--t2); font-variant-numeric: tabular-nums; opacity: var(--dim1); }
 .c-meter canvas { display: block; width: 100%; height: var(--fader-h); }
@@ -376,7 +376,7 @@ body.helping [data-help] { opacity: 1; }
 .rgn { display: flex; align-items: baseline; gap: var(--s2); flex: none; }
 .rgn i {
   font-style: normal; font-family: var(--font-display);
-  font-size: var(--t1); letter-spacing: var(--tr-legend); opacity: var(--dim2);
+  font-size: var(--t1); letter-spacing: var(--tr-legend); opacity: var(--dim-text);
 }
 .rgn b {
   font-weight: 500; font-size: var(--t2); font-variant-numeric: tabular-nums;
@@ -508,7 +508,7 @@ kbd {
 /* ONE / GATE / LOOP / — all in one box: an auto column here resized the key
    column beside it every time a pad's mode changed. */
 .p-mode { font-family: var(--font-display); font-size: var(--t1);
-          letter-spacing: var(--tr-legend); opacity: var(--dim2);
+          letter-spacing: var(--tr-legend); opacity: var(--dim-text);
           text-align: right; overflow: hidden; white-space: nowrap; }
 .pad.on .p-mode, .pad.on .p-label { opacity: 1; }
 
@@ -532,8 +532,8 @@ kbd {
   font-size: var(--t2); cursor: pointer;
 }
 .b-row:hover { background: var(--n1); }
-.b-row .k { font-family: var(--font-display); font-size: var(--t1); letter-spacing: var(--tr-legend); opacity: var(--dim2); }
-.b-row .sz { text-align: right; opacity: var(--dim2); font-variant-numeric: tabular-nums; }
+.b-row .k { font-family: var(--font-display); font-size: var(--t1); letter-spacing: var(--tr-legend); opacity: var(--dim-text); }
+.b-row .sz { text-align: right; opacity: var(--dim-text); font-variant-numeric: tabular-nums; }
 .b-row .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .b-row .to { display: flex; gap: var(--s1); justify-content: flex-end; }
 .b-row .to .btn { padding: 0 var(--s2); }
@@ -545,7 +545,7 @@ kbd {
 
 .rows dt {
   font-family: var(--font-display); font-size: var(--t1); line-height: var(--lh2);
-  letter-spacing: var(--tr-legend); text-transform: uppercase; opacity: var(--dim2);
+  letter-spacing: var(--tr-legend); text-transform: uppercase; opacity: var(--dim-text);
   height: var(--lh2); overflow: hidden;
 }
 .rows dd {
@@ -580,7 +580,7 @@ kbd.w { letter-spacing: var(--tr-legend); text-indent: var(--optic-centre); }
   position: absolute; left: var(--s4); top: var(--s3); right: 0;
   display: flex; gap: var(--s5); pointer-events: none;
   font-family: var(--font-display); font-size: var(--t1);
-  letter-spacing: var(--tr-legend); text-transform: uppercase; opacity: var(--dim2);
+  letter-spacing: var(--tr-legend); text-transform: uppercase; opacity: var(--dim-text);
 }
 /* CORR +1.00 / CORR -0.98 — one character narrower on the minus, so it gets a
    box like every other live figure. */

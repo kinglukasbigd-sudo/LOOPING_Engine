@@ -617,9 +617,9 @@ function buildStrips(n) {
       <span class="c-gain"><input class="slider" type="range" min="0" max="1.4" step="0.005"></span>
       <span class="c-pan"><input class="slider" type="range" min="-1" max="1" step="0.02"></span>
       <span class="c-btns">
-        <button class="btn" data-t="mute">M</button>
-        <button class="btn" data-t="solo">S</button>
-        <button class="btn" data-t="rev">R</button>
+        <button class="btn" data-t="mute" aria-label="Mute track ${i + 1}">M</button>
+        <button class="btn" data-t="solo" aria-label="Solo track ${i + 1}">S</button>
+        <button class="btn" data-t="rev" aria-label="Play track ${i + 1} backwards">R</button>
       </span>
       <span class="c-q"></span>`;
     el.addEventListener('mousedown', (e) => {
@@ -878,7 +878,7 @@ function onRecordDone(msg) {
     takeReady = { path: msg.files[0], name: names[0], dir: msg.dir };
   }
   const part = names.length > 1 ? ' Its first part' : ' It';
-  // The focus bar already says which row ENTER would use, and Tab can move it
+  // The focus bar already says which row ENTER would use, and [ ] can move it
   // after this sentence is written — so it points at the bar rather than naming
   // a number that goes stale.
   const put = takeReady
@@ -951,6 +951,7 @@ function buildCues() {
     b.className = 'btn';
     b.dataset.cue = c;
     b.textContent = c + 1;
+    b.setAttribute('aria-label', 'Hot cue ' + (c + 1));
     b.setAttribute('aria-pressed', false);
     host.appendChild(b);
   }
@@ -1967,6 +1968,10 @@ $('#master').oninput = (e) => send({ op: 'master.gain', v: +e.target.value });
 
 /* ── keys ───────────────────────────────────────────────────────────── */
 const down = new Set();
+function stepFocus(d) {
+  const n = S ? S.tracks.length : 8;
+  setFocus((focus + d + n) % n);
+}
 window.addEventListener('keydown', (e) => {
   const tgt = e.target;
   if (tgt && tgt.matches && tgt.matches('input, textarea')) return;
@@ -2033,12 +2038,13 @@ window.addEventListener('keydown', (e) => {
     case 'KeyL': e.preventDefault();
       if (e.shiftKey) openPicker(true); else openBrowser();
       break;
-    case 'Tab': {
-      e.preventDefault();
-      const n = S ? S.tracks.length : 8;
-      setFocus((focus + (e.shiftKey ? -1 : 1) + n) % n);
-      break;
-    }
+    /* [ and ] step the focus bar. This was TAB, and TAB is given back to the
+       browser: swallowing it meant keyboard focus could never reach a button,
+       so every control that has no key of its own — MAP, REC, the cues, the
+       source modes — was reachable by mouse alone. A panel for playing in the
+       dark still has to be a page someone can drive without one. */
+    case 'BracketLeft':  e.preventDefault(); stepFocus(-1); break;
+    case 'BracketRight': e.preventDefault(); stepFocus(1); break;
     case 'Enter':
       if (takeReady) { e.preventDefault(); loadTake(focus); }
       break;

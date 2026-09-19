@@ -79,7 +79,8 @@ once a device is there — you just can't hear it.
                                       , / .   jump loop ∓1 bar
                                       9 / 0   fit loop / whole file
                                       - / =   zoom out / in
-                                      TAB L   next track / load
+                                      [ / ]   previous / next track
+                                      L       load a file
                                       `       key bank A B C D
                                       H       hold: loop roll
                                       K       hold: echo
@@ -172,6 +173,25 @@ Each track has three sources: `STEREO`, `CTR` and `SIDE`.
 This is channel arithmetic, not source separation. It works on a mix where the
 vocal is dead centre and falls apart when it is not. Both variants are computed
 once on a worker thread and swapped in as a pointer.
+
+## What this stores, and where
+
+Everything LOOP ENGINE writes is a plain file on your own disk, in a place you
+can open, copy or delete yourself. There is no account, no sign-up, no email, no
+telemetry, no analytics, no crash reporting and no update check, and nothing is
+sent anywhere: the panel talks to `127.0.0.1` and to nothing else, and the type
+it draws with is served from `ui/fonts/`, not from a font CDN.
+
+| where | what is in it |
+|---|---|
+| `~/.loopengine/sessions/*.json` | your sets: which file each track and key holds, its region, gain, pan, speed, cues and zoom. **File references are absolute paths**, so if your home folder has your name in it, your name is in these files. That matters only if you send one to somebody. |
+| `~/.loopengine/recordings/*.wav` | takes of the master output, written by REC |
+| `~/.loopengine/session.key` | a random key, mode `0600`, used to sign the folder grants inside a session so one machine's grant cannot be replayed on another |
+| `.inbox/` beside the code | files dropped onto the panel, kept so a session can find them again |
+| `kits/testkit-124/*.wav` | the demo kit, synthesised by `demo.py` from numpy. No sample in it came from anywhere else |
+
+To delete all of it: remove `~/.loopengine/` and `.inbox/`. Nothing outside those
+folders is written, and nothing is left behind anywhere else.
 
 ## Sessions
 
