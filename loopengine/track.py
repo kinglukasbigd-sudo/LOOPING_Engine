@@ -11,6 +11,7 @@ MODES = ["STEREO", "CTR", "SIDE"]
 # regions shorter than one callback block are allowed and wrap several times
 # per block — the modulo gather handles that, and it is a usable effect.
 MIN_LOOP = 64
+CUES = 8          # hot cues per track
 
 
 # A stop halts once the smoothed gain is below this: -80 dB.
@@ -32,7 +33,7 @@ class Track:
         "xfade", "slices", "bpm", "bpm_conf", "peak", "rms", "_g", "_gl",
         "_gr", "_w", "fired", "queued", "analysing", "stopping",
         "roll_beats", "roll_armed", "roll", "roll_start", "roll_shadow",
-        "_rfade", "_rxf", "_rtail",
+        "_rfade", "_rxf", "_rtail", "cues",
     )
 
     def __init__(self, index: int, blocksize: int):
@@ -74,6 +75,9 @@ class Track:
         # that window begins, and `roll_shadow` where the phase would have been
         # all along — which is where the release puts it back. The loop points
         # are not touched by any of it.
+        # Eight hot cues, in source samples. -1 is an empty one. Aiming
+        # points, like the slice marks: setting one never moves a loop point.
+        self.cues = np.full(CUES, -1, dtype=np.int64)
         self.roll_beats = 0.0      # length asked for, in beats of the clock
         self.roll_armed = False    # waiting for its own grid line
         self.roll = 0
@@ -104,10 +108,14 @@ class Track:
         self.loop_end = self.frames
         self.phase = 0.0
         self.xfade = int(xfade_ms * 0.001 * sr)
+        self.cues[:] = -1              # a new file has nobody's cues on it
+        self.roll_cancel()
         self._w = dsp.Work(self.blocksize, self.channels)
 
     def clear(self):
         self.playing = False
+        self.cues[:] = -1
+        self.roll_cancel()
         self.src = None
         self.variants = {}
         self.stopping = False
@@ -318,6 +326,40 @@ class Track:
         L = max(MIN_LOOP, int(round(self.loop_len * factor)))
         self.set_loop(self.loop_start, self.loop_start + L)
 
+    # -- hot cues ----------------------------------------------------------
+    def cue_set(self, c: int):
+        """Where the playhead is now. While rolling, where playback really is."""
+        if self.src is None or not 0 <= c < CUES:
+            return
+        p = self.roll_shadow if self.roll > 0 else self.phase
+        self.cues[c] = int(max(0, min(self.frames - 1, int(p))))
+
+    def cue_clear(self, c: int):
+        if 0 <= c < CUES:
+            self.cues[c] = -1
+
+    def cue_jump(self, c: int):
+        """Inside the region, the playhead moves. Outside it, the region moves.
+
+        A cue past the end of the loop is a cue into another part of the file,
+        and jumping the playhead there would put it somewhere the loop is about
+        to wrap away from. So the window slides to start on the cue and keeps
+        its length — the same operation as a beat jump — and playback starts at
+        its head.
+        """
+        if self.src is None or not 0 <= c < CUES:
+            return
+        p = int(self.cues[c])
+        if p < 0:
+            return
+        if self.loop_start <= p < self.loop_end:
+            self.phase = float(p)
+        else:
+            self.nudge_loop(p - self.loop_start)
+            self.phase = float(self.loop_start)
+        if self.roll > 0:
+            self.roll_shadow = self.phase      # the roll ends where the cue is
+
     def nudge_loop(self, frames: int):
         """Slide the whole loop window without changing its length."""
         L = self.loop_len
@@ -334,6 +376,7 @@ class Track:
             "i": self.index,
             "name": self.name,
             "roll": round(self.roll_beats, 4) if (self.roll or self.roll_armed) else 0,
+            "cues": [int(x) for x in self.cues],
             "path": self.path,
             "loaded": self.src is not None,
             "playing": self.playing,

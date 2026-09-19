@@ -443,6 +443,39 @@ def t_banks_survive_a_session_and_an_old_one_lands_in_bank_A():
         shutil.rmtree(base, ignore_errors=True)
 
 
+def t_cues_round_trip():
+    base = base_dir()
+    try:
+        r = Rig(base)
+        _, views = build_set(r, os.path.join(base, "music"))
+        r.post("track.cues", i=0, cues=[100, 2000, -1, -1, -1, -1, -1, 9999])
+        path, doc, unsaved, _ = r.a.save_session(views)
+        row = [t for t in doc["tracks"] if t["slot"] == 0][0]
+        check("a track's cues are written with it",
+              row["cues"] == [100, 2000, -1, -1, -1, -1, -1, 9999], str(row["cues"]))
+        r2 = Rig(base)
+        r2.a.load_session(path, analyse=False)
+        r2.settle()
+        check("and come back on the track they were set on",
+              [int(c) for c in r2.e.tracks[0].cues] == [100, 2000, -1, -1, -1, -1, -1, 9999]
+              and all(c < 0 for c in r2.e.tracks[1].cues),
+              str([int(c) for c in r2.e.tracks[0].cues]))
+        # a session from before cues existed
+        old = json.load(open(path))
+        for t in old["tracks"]:
+            t.pop("cues", None)
+        op = os.path.join(os.path.dirname(path), "nocues.json")
+        json.dump(old, open(op, "w"))
+        r3 = Rig(base)
+        res = r3.a.load_session(op, analyse=False)
+        r3.settle()
+        check("a session with no cues in it loads with none",
+              res["state"] == "loaded" and all(c < 0 for c in r3.e.tracks[0].cues),
+              res["state"])
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+
+
 if __name__ == "__main__":
     for fn in (t_round_trip,
                t_moved_and_changed_files,
@@ -452,7 +485,8 @@ if __name__ == "__main__":
                t_a_save_while_files_are_away_keeps_them,
                t_a_kept_grant_is_resigned_only_if_it_checked_out,
                t_a_hand_edit_with_the_wrong_types_never_stops_halfway,
-               t_banks_survive_a_session_and_an_old_one_lands_in_bank_A):
+               t_banks_survive_a_session_and_an_old_one_lands_in_bank_A,
+               t_cues_round_trip):
         try:
             fn()
         except Exception as exc:

@@ -29,7 +29,7 @@ LAT_N = 512          # rolling window of command pickup times
 # Ops that wait for the next quantum. Everything else lands now.
 QUANTIZED = {
     "track.play", "track.stop", "track.toggle", "track.rev", "track.retrig",
-    "pad.trigger.q",
+    "pad.trigger.q", "track.cue.jump",
     # A region change on a running track lands on the boundary too. Moving the
     # points under a moving playhead is what clicks; landing them where the
     # material is already coherent, with the existing equal-power crossfade
@@ -55,6 +55,9 @@ QUANTIZED = {
 # stranded-command hazard again with a different name.
 LAUNCH = {
     "track.play", "track.stop", "track.toggle", "track.retrig", "pad.trigger.q",
+    # A cue is a moment, not an edit: it says "be there then". With the clock
+    # stopped there is no then, so it goes with the rest of the launches.
+    "track.cue.jump",
 }
 
 # The quantised queue holds at most one entry per (op, index) — collapse sees
@@ -67,7 +70,7 @@ QUEUED_LABEL = {
     "track.play": "START", "track.stop": "STOP", "track.toggle": "TOGGLE",
     "track.rev": "REV", "track.retrig": "RETRIG", "track.loop": "LOOP",
     "track.loop.scale": "LOOP", "track.loop.nudge": "LOOP",
-    "track.loop.slice": "LOOP",
+    "track.loop.slice": "LOOP", "track.cue.jump": "CUE",
 }
 
 
@@ -862,6 +865,27 @@ class Engine:
             s = self._held[pos]
             self.voices.release_pad(self._pad_slot(kw) if s < 0 else s)
             self._held[pos] = -1
+        elif op == "track.cue.set":
+            t = self._t(kw)
+            if t:
+                t.cue_set(int(kw.get("c", 0)))
+        elif op == "track.cue.clear":
+            t = self._t(kw)
+            if t:
+                t.cue_clear(int(kw.get("c", 0)))
+        elif op == "track.cue.jump":
+            t = self._t(kw)
+            if t:
+                t.cue_jump(int(kw.get("c", 0)))
+        elif op == "track.cues":
+            # a session putting a whole set back, in one command
+            t = self._t(kw)
+            if t:
+                cues = kw.get("cues") or ()
+                t.cues[:] = -1
+                for c in range(min(len(cues), t.cues.shape[0])):
+                    v = int(cues[c])
+                    t.cues[c] = v if 0 <= v < t.frames else -1
         elif op == "track.roll.on":
             # Not quantised: it waits on the roll's own grid, not the launch
             # quantum, and the two are rarely the same division.

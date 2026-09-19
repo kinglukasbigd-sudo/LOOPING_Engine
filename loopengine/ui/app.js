@@ -72,6 +72,8 @@ const HELP = {
   pads:    ['KEYS',              'Each key holds its own sound and loop, and keeps them when you change the track.'],
   bank:    ['KEY BANK',          'Four banks of the same sixteen keys. Switching changes what the keys point at, never what a key holds. ` cycles.'],
   pmode:   ['WHOSE MODE',        'What ONE / GATE / LOOP act on: the key being edited, or the mode a key takes when you assign it.'],
+  cues:    ['HOT CUES',          'Eight marks in this track. Press an empty one to drop it where the playhead is, press a set one to jump there, CTRL-press to clear it. Jumps wait for the quantum.'],
+  jump:    ['BEAT JUMP',         'Slides the loop window without changing its length. 7 and 8 do the same by one beat.'],
   roll:    ['LOOP ROLL',         'Hold H to stutter the focused track in place. Let go and it carries on exactly where it would have been. The button picks the length.'],
   session: ['SESSION',           'SAVE writes every track, key, region and zoom to a file. OPEN puts a set back.'],
   record:  ['RECORD',            'REC arms a take of the master output. RUN starts it, or it starts at once if the clock runs. REC again writes the file.'],
@@ -917,6 +919,65 @@ function releasePad(i) {
   send({ op: 'pad.release', i });
 }
 
+/* Eight marks, and the row that shows them. Aiming points only: nothing here
+   moves a loop point on its own, and a cue that is set is lit the way a toggle
+   is lit — accent is spoken for by the region. */
+const CUES = 8;
+function buildCues() {
+  const host = $('#cuerow');
+  if (!host || host.children.length === CUES) return;
+  host.innerHTML = '';
+  for (let c = 0; c < CUES; c++) {
+    const b = document.createElement('button');
+    b.className = 'btn';
+    b.dataset.cue = c;
+    b.textContent = c + 1;
+    b.setAttribute('aria-pressed', false);
+    host.appendChild(b);
+  }
+}
+
+function cueTarget() {
+  if (!S) return null;
+  if (focusKind === 'key') {
+    localError = 'Cues are a track thing — the waveform is showing a key.';
+    return null;
+  }
+  const t = S.tracks[focus];
+  if (!t || !t.loaded) {
+    localError = 'Nothing to cue — track ' + (focus + 1) + ' is empty.';
+    return null;
+  }
+  return t;
+}
+
+function cuePress(c, clear) {
+  const t = cueTarget();
+  if (!t) return;
+  const at = (t.cues || [])[c];
+  const el = $$('#cuerow .btn')[c];
+  if (clear) {
+    if (el) el.setAttribute('aria-pressed', false);          // paint first
+    send({ op: 'track.cue.clear', i: focus, c });
+  } else if (at === undefined || at < 0) {
+    if (el) el.setAttribute('aria-pressed', true);
+    send({ op: 'track.cue.set', i: focus, c });
+  } else {
+    if (el) el.classList.add('hit');
+    setTimeout(() => el && el.classList.remove('hit'), 140);
+    markQueued(focus, 'CUE');                                 // paint first
+    send({ op: 'track.cue.jump', i: focus, c });
+  }
+}
+
+function paintCues() {
+  const t = S && focusKind === 'track' ? S.tracks[focus] : null;
+  const cues = (t && t.cues) || [];
+  const row = $$('#cuerow .btn');
+  for (let c = 0; c < row.length; c++)
+    row[c].setAttribute('aria-pressed', !!(cues[c] >= 0));
+}
+
 function buildPads(n) {
   const host = $('#padgrid');
   host.innerHTML = '';
@@ -1005,6 +1066,8 @@ function renderState() {
   if ($$('#strips .strip').length !== S.tracks.length) buildStrips(S.tracks.length);
   if ($$('#padgrid .pad').length !== S.pads.length) buildPads(S.pads.length);
   setText($('#bank-now'), 'ABCD'[settled('bank', S.bank || 0)] || 'A');
+  buildCues();
+  paintCues();
   paintRoll(settled('roll', (S.tracks[rollTrack >= 0 ? rollTrack : focus] || {}).roll || 0));
 
   S.tracks.forEach((t, i) => {
@@ -1426,6 +1489,17 @@ function drawWave() {
     g.globalAlpha = 1;
   }
 
+  /* Hot cues: ink ticks at the top edge. Not accent — accent is carrying the
+     region here — and not full height, so they never read as a playhead. */
+  if (t.kind === 'track' && t.cues) {
+    g.fillStyle = C.fg;
+    for (const cue of t.cues) {
+      if (cue < 0 || cue < v.vs || cue > v.ve) continue;
+      const x = Math.round(X(cue));
+      g.fillRect(x, 0, Math.max(1, Math.round(r)), 11 * r);
+    }
+  }
+
   // the two handles, wherever they are in view
   const hw = Math.max(3, Math.round(4 * r));
   for (const [x, edge] of [[x0, 'in'], [x1, 'out']]) {
@@ -1785,6 +1859,12 @@ const ACT = {
     setText($('#bank-now'), 'ABCD'[b]);    // paint first
     send({ op: 'pads.bank', b });
   },
+  /* Slides the window, never its length — the op the loop keys already use,
+     asked for a bar as well as a beat. */
+  jbeatb: () => { markQueued(focus, 'LOOP'); send({ op: 'track.loop.nudge', i: focus, v: -1 }); },
+  jbeatf: () => { markQueued(focus, 'LOOP'); send({ op: 'track.loop.nudge', i: focus, v: 1 }); },
+  jbarb: () => { markQueued(focus, 'LOOP'); send({ op: 'track.loop.nudge', i: focus, v: -4 }); },
+  jbarf: () => { markQueued(focus, 'LOOP'); send({ op: 'track.loop.nudge', i: focus, v: 4 }); },
   rolllen: () => {
     rollBeats = ROLLS[(ROLLS.indexOf(rollBeats) + 1) % ROLLS.length];
     setText($('#roll-len'), rollLabel(rollBeats));      // paint first
@@ -1837,6 +1917,8 @@ document.addEventListener('click', (e) => {
   /* An armed confirmation waits for its own press and nothing else, so any
      other click calls it off. Presses inside the pad grid belong to the assign
      gesture itself and are left to it. */
+  const cue = e.target.closest('#cuerow .btn');
+  if (cue) cuePress(+cue.dataset.cue, e.ctrlKey || e.metaKey);
   if (!b || b.dataset.act !== 'mappads') cancelMap();
   if (!e.target.closest('#padgrid') && (!b || b.dataset.act !== 'assign')) cancelAssign();
   if (b && ACT[b.dataset.act]) ACT[b.dataset.act]();
@@ -1900,6 +1982,9 @@ window.addEventListener('keydown', (e) => {
     case 'Digit6': send({ op: 'track.loop.scale', i: focus, v: 2.0 }); break;
     case 'Digit7': send({ op: 'track.loop.nudge', i: focus, v: -1 }); break;
     case 'Digit8': send({ op: 'track.loop.nudge', i: focus, v: 1 }); break;
+    /* A bar at a time, next to nothing else: 7 and 8 already do a beat. */
+    case 'Comma': ACT.jbarb(); break;
+    case 'Period': ACT.jbarf(); break;
     case 'Backquote': ACT.bank(); break;
     case 'KeyT': send({ op: 'tap' }); break;
     case 'KeyG': ACT.quantum(); break;

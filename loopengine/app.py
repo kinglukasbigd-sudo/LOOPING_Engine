@@ -516,6 +516,7 @@ class App:
                 "gain": round(float(t.gain), 4), "pan": round(float(t.pan), 4),
                 "speed": round(float(t.speed), 4), "reverse": bool(t.reverse),
                 "mode": t.mode, "mute": bool(t.mute), "solo": bool(t.solo),
+                "cues": [int(c) for c in t.cues],
                 "view": view_of("track", t.index, t.name, t.frames)})
         keys = []
         for i, p in enumerate(e.pads):
@@ -768,6 +769,12 @@ class App:
             e.post("track.rev", i=i, v=bool(row.get("reverse", False)))
             e.post("track.mute", i=i, v=bool(row.get("mute", False)))
             e.post("track.solo", i=i, v=bool(row.get("solo", False)))
+            # hand-editable, so anything that is not a whole number is no cue
+            cues = row.get("cues")
+            if isinstance(cues, list):
+                e.post("track.cues", i=i,
+                       cues=[int(c) if isinstance(c, (int, float))
+                             and not isinstance(c, bool) else -1 for c in cues[:8]])
             if not self._inside_roots_only(f["path"]):
                 self._grant(f["path"])
             self.meta[i] = {"frames": src.shape[0], "sr": sr, "channels": src.shape[1],

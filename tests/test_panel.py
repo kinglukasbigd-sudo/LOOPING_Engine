@@ -815,9 +815,10 @@ def t_a_roll_is_held_and_says_so_before_it_sends(page):
     for _ in range(4):
         page.click('#roll-len')
         caps.append(page.evaluate("document.querySelector('#roll-len').textContent"))
+    told = [x for x in page.evaluate("window.__sent") if "roll" in x["data"]]
     check("the button cycles the four lengths and reaches the engine never",
-          caps == ["1/2", "1", "1/8", "1/4"]
-          and not page.evaluate("window.__sent").__len__(), str(caps))
+          caps == ["1/2", "1", "1/8", "1/4"] and not told,
+          "%s %s" % (caps, str(told)[:40]))
 
     page.evaluate("window.__sent = []")
     page.keyboard.down("h")
@@ -834,6 +835,41 @@ def t_a_roll_is_held_and_says_so_before_it_sends(page):
           len(off) == 1 and off[0]["roll"] == "hold H"
           and page.evaluate("document.querySelector('#roll-line').textContent") == "hold H",
           str(off[:1])[:90])
+
+
+def t_a_cue_is_set_then_jumped_then_cleared(page):
+    closed(page)
+    if not page.evaluate("S.tracks[0].loaded"):
+        open_file(page, "tk_stab")            # the last test ejected it
+    page.evaluate("focusKind = 'track'; focus = 0; renderState()")
+    page.evaluate("window.__sent = []")
+    lit = lambda: page.evaluate(
+        "document.querySelectorAll('#cuerow .btn')[3].getAttribute('aria-pressed')")
+    check("a cue that holds nothing is not lit", lit() == "false")
+    page.locator("#cuerow .btn").nth(3).click()
+    page.wait_for_function("S.tracks[0].cues[3] >= 0", timeout=10000)
+    paint(page)
+    sent = [x["data"] for x in page.evaluate("window.__sent")]
+    check("pressing an empty one drops it where the playhead is, and lights it",
+          any('"track.cue.set"' in d and '"c":3' in d for d in sent) and lit() == "true",
+          str([d for d in sent if "cue" in d])[:80])
+    at = page.evaluate("S.tracks[0].cues[3]")
+
+    page.evaluate("window.__sent = []")
+    page.locator("#cuerow .btn").nth(3).click()
+    page.wait_for_timeout(150)
+    sent = [x["data"] for x in page.evaluate("window.__sent")]
+    check("pressing it again jumps there and sets nothing new",
+          any('"track.cue.jump"' in d and '"c":3' in d for d in sent)
+          and page.evaluate("S.tracks[0].cues[3]") == at,
+          str([d for d in sent if "cue" in d])[:80])
+
+    page.evaluate("window.__sent = []")
+    page.locator("#cuerow .btn").nth(3).click(modifiers=["Control"])
+    page.wait_for_function("S.tracks[0].cues[3] < 0", timeout=10000)
+    paint(page)
+    check("and CTRL-pressing it clears it, leaving the others alone",
+          lit() == "false" and page.evaluate("S.tracks[0].cues.filter(c => c >= 0).length") == 0)
 
 
 if __name__ == "__main__":
@@ -860,6 +896,7 @@ if __name__ == "__main__":
             for fn in (t_assign_keeps_what_the_key_was_given,
                        t_a_bank_switch_moves_the_address_not_the_audio,
                        t_a_roll_is_held_and_says_so_before_it_sends,
+                       t_a_cue_is_set_then_jumped_then_cleared,
                        t_map_asks_and_mode_is_only_a_mode,
                        t_clearing_a_key,
                        t_feedback_lands_before_the_send,
