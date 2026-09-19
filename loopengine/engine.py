@@ -378,6 +378,14 @@ class Engine:
                     d = self.transport.frames_to_boundary()
                 if self._q_n and d > 0:
                     n = min(n, d)
+            # An armed roll starts on a line of its own grid, so the span is
+            # cut there exactly as a queued launch cuts it.
+            d = self._roll_wait()
+            if d == 0:
+                self._roll_begin()
+                d = self._roll_wait()
+            if d > 0 and d < n:
+                n = d
             self._render_span(mix[off:off + n], n)
             self.transport.advance(n)
             off += n
@@ -427,6 +435,29 @@ class Engine:
             self._scope[w:] = src[:first]
             self._scope[:end - SCOPE_N] = src[first:]
         self._scope_w = end % SCOPE_N
+
+    def _roll_wait(self):
+        """Frames until the earliest armed roll's line, 0 to start now, -1 when
+        nothing is armed. Eight attribute reads, no allocation."""
+        tracks = self.tracks
+        tr = self.transport
+        out = -1
+        for k in range(len(tracks)):
+            if tracks[k].roll_armed:
+                d = tr.frames_to_grid(tracks[k].roll_beats)
+                if d == 0:
+                    return 0
+                if out < 0 or d < out:
+                    out = d
+        return out
+
+    def _roll_begin(self):
+        tracks = self.tracks
+        tr = self.transport
+        for k in range(len(tracks)):
+            t = tracks[k]
+            if t.roll_armed and tr.frames_to_grid(t.roll_beats) == 0:
+                t.roll_begin(tr.spb, self.sr)
 
     def _render_span(self, out, n):
         if n <= 0:
@@ -831,12 +862,23 @@ class Engine:
             s = self._held[pos]
             self.voices.release_pad(self._pad_slot(kw) if s < 0 else s)
             self._held[pos] = -1
+        elif op == "track.roll.on":
+            # Not quantised: it waits on the roll's own grid, not the launch
+            # quantum, and the two are rarely the same division.
+            t = self._t(kw)
+            if t is not None:
+                t.roll_arm(kw.get("beats", 0.25))
+        elif op == "track.roll.off":
+            t = self._t(kw)
+            if t is not None:
+                t.roll_release()
         elif op == "panic":
             # ESC: the immediate cut. No fade, by design — it is the control
             # for when something has to be silent this block, clicks and all.
             self.voices.panic()
             for t in self.tracks:
                 t.playing = t.stopping = False
+                t.roll_cancel()
         elif op == "probe":
             # touched by the audio thread itself, so an id coming back in the
             # next snapshot proves the whole loop, not just the socket

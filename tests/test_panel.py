@@ -124,6 +124,7 @@ window.__sent = [];
              ? document.querySelector('[data-act="run"]').getAttribute('aria-pressed') : null,
         pad0: pad ? pad.className : '',
         line: (document.querySelector('#session-line') || {}).textContent || '',
+        roll: (document.querySelector('#roll-line') || {}).textContent || '',
         win: (document.querySelector('#w-in') || {}).textContent || '',
         wout: (document.querySelector('#w-out') || {}).textContent || '',
         hand: (typeof dragLoop !== 'undefined' && dragLoop)
@@ -806,6 +807,35 @@ def t_a_bank_switch_moves_the_address_not_the_audio(page):
           "%s vs %s" % (key(page, 0), on_a))
 
 
+def t_a_roll_is_held_and_says_so_before_it_sends(page):
+    """The length is the panel's business; the hold is the engine's."""
+    closed(page)
+    page.evaluate("window.__sent = []")
+    caps = []
+    for _ in range(4):
+        page.click('#roll-len')
+        caps.append(page.evaluate("document.querySelector('#roll-len').textContent"))
+    check("the button cycles the four lengths and reaches the engine never",
+          caps == ["1/2", "1", "1/8", "1/4"]
+          and not page.evaluate("window.__sent").__len__(), str(caps))
+
+    page.evaluate("window.__sent = []")
+    page.keyboard.down("h")
+    page.wait_for_timeout(150)
+    on = [x for x in page.evaluate("window.__sent") if "roll.on" in x["data"]]
+    check("holding H rolls the focused track, and the rail says so first",
+          len(on) == 1 and '"beats":0.25' in on[0]["data"].replace(" ", "")
+          and on[0]["roll"] == "rolling 1/4", str(on[:1])[:100])
+    page.keyboard.up("h")
+    page.wait_for_timeout(150)
+    off = [x for x in page.evaluate("window.__sent") if "roll.off" in x["data"]]
+    paint(page)
+    check("letting go ends it, once, and the box goes back to waiting",
+          len(off) == 1 and off[0]["roll"] == "hold H"
+          and page.evaluate("document.querySelector('#roll-line').textContent") == "hold H",
+          str(off[:1])[:90])
+
+
 if __name__ == "__main__":
     base = tempfile.mkdtemp(prefix="le-panel-ui-")
     server = Panel(base)
@@ -829,6 +859,7 @@ if __name__ == "__main__":
             ready(page)
             for fn in (t_assign_keeps_what_the_key_was_given,
                        t_a_bank_switch_moves_the_address_not_the_audio,
+                       t_a_roll_is_held_and_says_so_before_it_sends,
                        t_map_asks_and_mode_is_only_a_mode,
                        t_clearing_a_key,
                        t_feedback_lands_before_the_send,
