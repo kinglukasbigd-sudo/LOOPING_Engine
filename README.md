@@ -76,14 +76,27 @@ once a device is there — you just can't hear it.
  SHIFT + QWER   mute track 5–8        5 / 6   loop ÷2 / ×2
  SHIFT + ASDF   launch track 1–4      7 / 8   nudge loop ∓1 beat
  SHIFT + ZXCV   launch track 5–8      T G B   tap / quantum / reverse
+                                      , / .   jump loop ∓1 bar
                                       9 / 0   fit loop / whole file
                                       - / =   zoom out / in
                                       TAB L   next track / load
+                                      `       key bank A B C D
+                                      H       hold: loop roll
+                                      K       hold: echo
                                       ESC     panic, cut everything now
 ```
 
 SHIFT is the FUNC key: hold it and the pad grid becomes the track grid. Double
 click a strip to launch it.
+
+**Four banks of the same sixteen keys.** BANK in the pads bar cycles A to D,
+and so does the backquote; the letter sits in a box beside it. Switching is a
+change of address and nothing else — no slot is touched, a key already sounding
+plays on, and the release still reaches it, because a voice belongs to a slot
+and not to the cap that started it. ASSIGN, CLR and MAP act on the bank showing.
+The memory ceiling counts all four, because audio pinned where nobody is looking
+is still audio held. A session holds all sixty-four slots; a session written
+before banks existed loads into bank A.
 
 **A key holds its own sound.** ASSIGN, then the key cap, puts the focused
 track's file and its current loop onto that key; Ctrl or Cmd with the cap does
@@ -126,6 +139,27 @@ lights.
 `9` and `0` sit beside `-` and `=` so fitting and zooming are one run of four
 keys next to the loop keys `5`–`8`. `F` and `L`, the obvious letters, were
 already a pad and the file browser.
+
+**Eight hot cues a track**, on the bar under the waveform. Press an empty one
+and it takes the playhead's place; press a set one and the track goes there;
+CTRL-press clears it. A jump waits for the quantum like any other launch. A cue
+inside the region moves the playhead; a cue outside it slides the whole window
+to start there and keeps its length, which is the same operation as a beat jump.
+Setting or clearing one moves no loop point, and the marks on the waveform are
+ink ticks — the accent is already carrying the region. Beat jump slides that
+window by a beat (`7` `8`, or the buttons) or by a bar (`,` `.`).
+
+**Hold H for a loop roll.** The focused track stutters in place on the next line
+of the roll's own grid — 1/8, 1/4, 1/2 or a beat, picked on the rail — looping
+the length just played. Let go and playback carries on exactly where it would
+have been: a shadow phase runs the whole time as if nobody had pressed anything,
+and the release lands on it through the same seam crossfade the loop uses. The
+stored loop points are never touched. Rendered twice, with and without a roll,
+the two outputs are identical sample for sample once the release fade is past.
+
+**Hold K for the echo.** A tempo-synced quarter-beat delay with feedback on the
+master bus, from one ring allocated at startup. Release stops the input feeding
+it and what is in there rings out. ESC takes the tail with it.
 
 ## Looping a vocal out of a stereo mix
 
@@ -272,7 +306,7 @@ PYTHONPATH=.pylibs python3 -m tests     # with the vendored dependencies
 python3 -m tests                        # with installed ones
 ```
 
-423 checks in 16 files, about 58 seconds on the machine they were written on —
+493 checks in 19 files, about 79 seconds on the machine they were written on —
 more than half of that the browser file, which is the only one that starts a
 server and drives a real page.
 Each file runs in its own process and prints PASS, FAIL or SKIP for every check,
