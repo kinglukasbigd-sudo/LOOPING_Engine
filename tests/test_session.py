@@ -119,7 +119,7 @@ def t_round_trip():
         before = state(r.e)
         path, doc, unsaved, _ = r.a.save_session(views)
         check("save writes a versioned, human-readable file",
-              os.path.isfile(path) and json.load(open(path))["loopengine_session"] == 1
+              os.path.isfile(path) and json.load(open(path))["loopengine_session"] == 2
               and "\n  " in open(path).read(), os.path.basename(path))
         check("a file used by a track and a key is listed once",
               len(doc["files"]) == 4 and not unsaved,
@@ -277,14 +277,14 @@ def t_what_cannot_be_saved_or_read_says_so():
         check("audio with no file behind it is named, not silently dropped",
               unsaved == ["track 7 (in-memory) has no file on disk"] and not doc["tracks"], str(unsaved))
         future = json.load(open(path))
-        future["loopengine_session"] = 2
+        future["loopengine_session"] = 99
         fp = os.path.join(os.path.dirname(path), "future.json")
         json.dump(future, open(fp, "w"))
         later = os.stat(path).st_mtime_ns + 5 * 10 ** 9     # no relying on the clock's tick
         os.utime(fp, ns=(later, later))
         res = r.a.load_session(fp, analyse=False)
         check("a session from a newer format is refused with the reason",
-              res["state"] == "failed" and "format 2" in res["error"], res["error"])
+              res["state"] == "failed" and "format 99" in res["error"], res["error"])
         listed = r.a.session_list()["sessions"]
         check("the OPEN list shows sessions newest first and marks the unreadable",
               [x["name"] for x in listed][:1] == ["future.json"] and listed[0]["error"],
@@ -400,6 +400,49 @@ def t_a_hand_edit_with_the_wrong_types_never_stops_halfway():
         shutil.rmtree(base, ignore_errors=True)
 
 
+def t_banks_survive_a_session_and_an_old_one_lands_in_bank_A():
+    base = base_dir()
+    try:
+        r = Rig(base)
+        _, views = build_set(r, os.path.join(base, "music"))
+        r.post("pads.bank", b=2)
+        r.a.handle({"op": "pad.take", "i": 1, "track": 0, "ls": 500, "le": 9000})
+        r.settle()
+        r.post("pads.bank", b=0)
+        path, doc, unsaved, _ = r.a.save_session(views)
+        slots = sorted(k["slot"] for k in doc["keys"])
+        check("a key assigned on bank C is saved by its slot",
+              slots == [4, 5, 33] and not unsaved, str(slots))
+
+        r2 = Rig(base)
+        res = r2.a.load_session(path, analyse=False)
+        r2.settle()
+        check("and comes back on bank C, with bank A's keys where they were",
+              res["state"] == "loaded" and r2.e.pads[33].loaded
+              and (r2.e.pads[33].loop_start, r2.e.pads[33].loop_end) == (500, 9000)
+              and r2.e.pads[4].loaded and not r2.e.pads[32].loaded,
+              "%s %s" % (res["state"], (res.get("error") or "")[:60]))
+
+        # A format 1 file: sixteen key slots, and nothing else different.
+        old = json.load(open(path))
+        old["loopengine_session"] = 1
+        old["keys"] = [k for k in old["keys"] if k["slot"] < 16]
+        op = os.path.join(os.path.dirname(path), "old.json")
+        json.dump(old, open(op, "w"))
+        r3 = Rig(base)
+        res3 = r3.a.load_session(op, analyse=False)
+        r3.settle()
+        check("a session from the format before banks still loads",
+              res3["state"] == "loaded" and not res3.get("error"),
+              "%s %s" % (res3["state"], (res3.get("error") or "")[:60]))
+        check("and its keys land in bank A, with the other banks empty",
+              r3.e.pads[4].loaded and r3.e.pads[5].loaded
+              and not any(q.loaded for q in r3.e.pads[r3.e.bank_size:])
+              and r3.e.bank == 0)
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+
+
 if __name__ == "__main__":
     for fn in (t_round_trip,
                t_moved_and_changed_files,
@@ -408,7 +451,8 @@ if __name__ == "__main__":
                t_what_cannot_be_saved_or_read_says_so,
                t_a_save_while_files_are_away_keeps_them,
                t_a_kept_grant_is_resigned_only_if_it_checked_out,
-               t_a_hand_edit_with_the_wrong_types_never_stops_halfway):
+               t_a_hand_edit_with_the_wrong_types_never_stops_halfway,
+               t_banks_survive_a_session_and_an_old_one_lands_in_bank_A):
         try:
             fn()
         except Exception as exc:

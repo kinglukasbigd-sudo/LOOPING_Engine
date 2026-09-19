@@ -29,6 +29,9 @@ html, body {
 /* A panel title sizes to its content, so swapping PADS for KEYS — one pixel
    narrower — shifted the buttons beside it. Reserved for both strings. */
 .panel-title[data-help] { width: 6ch; flex: none; }
+/* Four letters wide enough for one: the box is the same size on every bank,
+   so switching moves nothing along the bar. */
+#bank-now { width: 2ch; flex: none; }
 body.helping [data-help] { opacity: 1; }
 /* In help mode the inspector carries the long form; its rows wrap there
    because that column already scrolls. */

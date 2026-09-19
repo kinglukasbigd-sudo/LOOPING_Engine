@@ -24,7 +24,16 @@ from .voice import GATE, LOOP, ONESHOT
 MAX_UPLOAD = 200 * 1024 * 1024
 
 
-KEY_CAPS = "1234QWERASDFZXCV"   # key slot -> the cap on the keyboard
+KEY_CAPS = "1234QWERASDFZXCV"   # key position -> the cap on the keyboard
+BANKS = "ABCD"
+
+
+def key_name(slot):
+    """A slot's name for a sentence. Bank A keeps the bare cap — it is the one
+    a run starts on, and "key Q" is what that key has always been called."""
+    cap = KEY_CAPS[slot % len(KEY_CAPS)]
+    b = slot // len(KEY_CAPS)
+    return cap if b == 0 else "%s/%s" % (BANKS[b % len(BANKS)], cap)
 KEY_MODES = (ONESHOT, GATE, LOOP)
 
 
@@ -317,13 +326,13 @@ class App:
             # the key's envelope is the source track's, captured now so it
             # survives that track being replaced
             t = int(msg.get("track", -1))
-            i = int(msg.get("i", 0)) % len(self.engine.pads)
+            i = self.engine.slot_of(msg.get("i", 0))
             if self.engine.pads[i].loaded and not msg.get("replace"):
                 # Hand-tuned audio goes only when its owner says so. The panel
                 # asks and its second press carries `replace`.
                 self.engine.last_error = (
                     "Key %s holds %s. Press it again to replace it, or clear it first."
-                    % (KEY_CAPS[i], self.engine.pads[i].name or "audio"))
+                    % (key_name(i), self.engine.pads[i].name or "audio"))
                 return
             self._forget_missing("key:%d" % i)
             if t in self.peaks:
@@ -334,7 +343,7 @@ class App:
             # Settings only, and only values the engine can use: it applies
             # these as given, so a null mode from a panel that has not painted
             # yet would stick to the key and travel into its session.
-            kw = {"i": int(msg.get("i", 0)) % len(self.engine.pads)}
+            kw = {"i": int(msg.get("i", 0)) % self.engine.bank_size}
             if msg.get("mode") in KEY_MODES:
                 kw["mode"] = msg["mode"]
             for f, lo, hi in (("gain", 0.0, 1.4), ("pan", -1.0, 1.0), ("speed", 0.25, 4.0)):
@@ -348,14 +357,16 @@ class App:
                 kw["label"] = str(msg["label"])[:32]
             self.engine.post("pad.assign", **kw)
         elif op == "pad.clear":
-            self.pad_peaks.pop(int(msg.get("i", 0)), None)
-            self._forget_missing("key:%d" % int(msg.get("i", 0)))
+            self.pad_peaks.pop(self.engine.slot_of(msg.get("i", 0)), None)
+            self._forget_missing("key:%d" % self.engine.slot_of(msg.get("i", 0)))
             self.engine.post("pad.clear", **{k: v for k, v in msg.items() if k != "op"})
         elif op == "pads.map":
             # MAP replaces every key with a file's slices — up to 16 hand-tuned
             # keys in one press. The panel asks first and its second press
             # carries `confirm`; this refuses anything else, whatever sent it.
-            taken = [KEY_CAPS[i] for i, p in enumerate(self.engine.pads) if p.loaded]
+            # this bank's keys only: MAP fills the sixteen the caps address
+            taken = [key_name(s) for s in self.engine.bank_slots()
+                     if self.engine.pads[s].loaded]
             if taken and not msg.get("confirm"):
                 self.engine.last_error = (
                     "MAP would replace %d assigned key%s (%s) with this file's "
@@ -363,6 +374,9 @@ class App:
                     % (len(taken), "" if len(taken) == 1 else "s", ", ".join(taken)))
                 return
             self.map_pads(int(msg["track"]), msg.get("mode", "ONE"))
+        elif op == "pads.bank":
+            # Address only. The keys point somewhere else; nothing is touched.
+            self.engine.post("pads.bank", b=int(msg.get("b", 0)))
         elif op == "tap":
             self.engine.transport.tap(time.monotonic())
         elif op.startswith(("track.", "transport.", "pad.", "master.", "clip.")) \
@@ -509,7 +523,7 @@ class App:
                 continue
             if not p.path or not os.path.isfile(p.path):
                 unsaved.append("key %s (%s) has no file on disk"
-                               % (KEY_CAPS[i], p.name or "unnamed"))
+                               % (key_name(i), p.name or "unnamed"))
                 continue
             keys.append({
                 "slot": i, "file": file_ref(p.path), "name": p.name,
@@ -535,7 +549,7 @@ class App:
             (tracks if kind == "track" else keys).append(
                 dict(k["row"], slot=i, file=kept_ids[sig]))
             kept.append("%s (%s)" % ("track %d" % (i + 1) if kind == "track"
-                                     else "key %s" % KEY_CAPS[i],
+                                     else "key %s" % key_name(i),
                                      os.path.basename(f["path"])))
         tracks.sort(key=lambda row: row["slot"])
         keys.sort(key=lambda row: row["slot"])
@@ -711,7 +725,7 @@ class App:
             extra = []
             for (i, _, fid, b, _) in keys:
                 if id(b) not in total:
-                    extra.append((KEY_CAPS[i], os.path.basename(files[fid]["path"]), b.nbytes))
+                    extra.append((key_name(i), os.path.basename(files[fid]["path"]), b.nbytes))
                 total[id(b)] = b.nbytes
             need = sum(total.values())
             if need > e.memory_limit:
@@ -733,7 +747,7 @@ class App:
         for i in range(len(e.tracks)):
             e.post("track.clear", i=i)
         for i in range(len(e.pads)):
-            e.post("pad.clear", i=i)
+            e.post("pad.clear", sl=i)
         self.peaks.clear()
         self.pad_peaks.clear()
         self.meta.clear()
@@ -765,10 +779,10 @@ class App:
         for (i, row, fid, b, source) in keys:
             f, sr = files[fid], decoded[fid][1]
             ls, le = region(row, b.shape[0])
-            e.post("pad.load", i=i, buf=b, sr=sr, name=os.path.basename(f["path"]),
+            e.post("pad.load", sl=i, buf=b, sr=sr, name=os.path.basename(f["path"]),
                    path=f["path"], ls=ls, le=le, source=source,
                    label=str(row.get("label") or ""))
-            e.post("pad.assign", i=i,               # the engine sets these as given
+            e.post("pad.assign", sl=i,             # the engine sets these as given
                    mode=row.get("mode") if row.get("mode") in KEY_MODES else ONESHOT,
                    gain=num(row, "gain", 1.0, 0.0, 1.4), pan=num(row, "pan", 0.0, -1.0, 1.0),
                    speed=num(row, "speed", 1.0, 0.25, 4.0),
@@ -922,7 +936,7 @@ class App:
         t = self.engine.tracks[track_i]
         pts = t.slices
         n = max(1, int(pts.size))
-        for k in range(len(self.engine.pads)):
+        for k in range(self.engine.bank_size):
             if pts.size:
                 j = k % n
                 ls = int(pts[j])

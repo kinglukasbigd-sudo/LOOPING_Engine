@@ -70,6 +70,7 @@ const HELP = {
   msr:     ['MUTE SOLO REVERSE', 'Mute, solo, and play backwards. Reverse waits for the quantum.'],
   q:       ['WAITING',           'Shows what this track is waiting to do at the next boundary.'],
   pads:    ['KEYS',              'Each key holds its own sound and loop, and keeps them when you change the track.'],
+  bank:    ['KEY BANK',          'Four banks of the same sixteen keys. Switching changes what the keys point at, never what a key holds. ` cycles.'],
   pmode:   ['WHOSE MODE',        'What ONE / GATE / LOOP act on: the key being edited, or the mode a key takes when you assign it.'],
   session: ['SESSION',           'SAVE writes every track, key, region and zoom to a file. OPEN puts a set back.'],
   record:  ['RECORD',            'REC arms a take of the master output. RUN starts it, or it starts at once if the clock runs. REC again writes the file.'],
@@ -88,7 +89,7 @@ let assignArmed = false;   // next key pressed takes the focused track's region
    next track press loads, and Esc leaves it on disk. */
 let takeReady = null;
 let editKeys = false;      // clicking a pad focuses it instead of firing it
-const padPeaks = {};       // pad index -> its own envelope
+const padPeaks = {};       // SLOT -> its own envelope, across every bank
 /* What the waveform panel is looking at: one view per track and per key,
    kept in this page and never sent to the engine. See view.js. */
 const views = View.store();
@@ -388,10 +389,11 @@ function subject() {
       sr: p.sr, ch: p.ch, frames: p.frames, ls: p.ls, le: p.le,
       bpm: 0, conf: 0, mode: 'STEREO', speed: p.speed, gain: p.gain,
       pan: p.pan, rev: p.rev, peak: 0, phase: 0, slices: 0,
+      slot: bankBase() + focusKey,
       playing: !!(S.pads_on && S.pads_on[focusKey]), queued: null,
       analysing: false, xfade: 0, path: p.name,
-      title: 'KEY ' + (PAD_CAPS[focusKey] || focusKey + 1),
-      peaks: padPeaks[focusKey],
+      title: 'KEY ' + keyName(bankBase() + focusKey),
+      peaks: padPeaks[bankBase() + focusKey],
     };
   }
   const t = S ? S.tracks[focus] : null;
@@ -411,7 +413,15 @@ function liveLoop(i, t) {
 /* ── the view ───────────────────────────────────────────────────────────
    Wires view.js to whatever the panel shows. A view is keyed to the slot and
    the file in it; the accurate peaks are keyed to that AND the source mode. */
-function subjectId(t) { return t.kind + ':' + t.i; }
+/* The slot a subject is, as opposed to the cap it sits under. A key's caches —
+   its envelope, its zoom, a session's note that its file is missing — belong to
+   the slot, so bank B's third key does not paint with bank A's waveform. */
+function bankBase() { return S && S.bank ? S.bank * S.pads.length : 0; }
+function keyName(slot) {
+  const n = PAD_CAPS.length, cap = PAD_CAPS[slot % n] || slot + 1;
+  return slot < n ? cap : 'ABCD'[Math.floor(slot / n) % 4] + '/' + cap;
+}
+function subjectId(t) { return t.kind + ':' + (t.slot === undefined ? t.i : t.slot); }
 function fileSig(t) { return t.name + '|' + t.frames; }
 function inkId(t) { return subjectId(t) + '|' + fileSig(t) + '|' + t.mode; }
 function cssW() { return $('#wcanvas').clientWidth || 1; }
@@ -447,7 +457,8 @@ function askRange() {
   const start = Math.floor(v.vs), end = Math.ceil(v.ve);
   const have = ranges.get(subjectId(t));
   if (have && have.ink === inkId(t) && have.src.start === start && have.src.end === end) return;
-  const d = rangeQ.ask({ kind: t.kind, i: t.i, start, end, buckets: Wd,
+  const d = rangeQ.ask({ kind: t.kind, i: t.slot === undefined ? t.i : t.slot,
+                         start, end, buckets: Wd,
                          frames: t.frames, ink: inkId(t) }, performance.now());
   if (d) sendRange(d);
 }
@@ -723,7 +734,7 @@ function sessionText(s) {
 }
 function slotName(id) {
   const [kind, i] = id.split(':');
-  return kind === 'key' ? 'key ' + (PAD_CAPS[+i] || +i + 1) : 'track ' + (+i + 1);
+  return kind === 'key' ? 'key ' + keyName(+i) : 'track ' + (+i + 1);
 }
 function onSessionSaved(msg) {
   OPT.delete('sessionLine');
@@ -975,6 +986,7 @@ function renderState() {
 
   if ($$('#strips .strip').length !== S.tracks.length) buildStrips(S.tracks.length);
   if ($$('#padgrid .pad').length !== S.pads.length) buildPads(S.pads.length);
+  setText($('#bank-now'), 'ABCD'[settled('bank', S.bank || 0)] || 'A');
 
   S.tracks.forEach((t, i) => {
     const el = $$('#strips .strip')[i];
@@ -1030,7 +1042,8 @@ function renderState() {
        audio when the track moves on, so "T5/S01" named a track that may
        since have been replaced — provenance that goes stale and reads as
        fact. The filename is the one thing that stays true. */
-    const gone = !mapped && S.session && S.session.missing && S.session.missing['key:' + i];
+    const gone = !mapped && S.session && S.session.missing
+              && S.session.missing['key:' + (bankBase() + i)];
     setText(el.querySelector('.p-label'),
             mapped ? p.name : (gone ? 'missing — ' + gone.name : 'unassigned'));
     setText(el.querySelector('.p-mode'), mapped ? p.mode : '—');
@@ -1738,6 +1751,21 @@ const ACT = {
   unload:  () => send({ op: 'unload', i: focus }),
   /* MAP replaces all 16 keys with this file's slices. With any key holding
      audio it asks first; with all of them empty it just does it. */
+  /* Four banks of the same sixteen caps. It changes what the keys point at
+     and nothing else: no slot is touched, and a key still sounding plays on.
+     The armed gestures are called off, because the key they were armed for is
+     not the key under that cap any more. */
+  bank: () => {
+    if (!S) return;
+    /* from the bank the hand has already been shown, not the one the engine
+       has echoed: four quick presses are four banks on, not one */
+    const b = (settled('bank', S.bank || 0) + 1) % (S.banks || 4);
+    cancelMap(); cancelAssign();
+    dragLoop = null;                       // a held region belongs to the slot it came from
+    predict('bank', b);
+    setText($('#bank-now'), 'ABCD'[b]);    // paint first
+    send({ op: 'pads.bank', b });
+  },
   mappads: () => {
     const taken = S ? S.pads.filter(p => p.loaded).length : 0;
     if (taken && !mapArmed) {
@@ -1849,6 +1877,7 @@ window.addEventListener('keydown', (e) => {
     case 'Digit6': send({ op: 'track.loop.scale', i: focus, v: 2.0 }); break;
     case 'Digit7': send({ op: 'track.loop.nudge', i: focus, v: -1 }); break;
     case 'Digit8': send({ op: 'track.loop.nudge', i: focus, v: 1 }); break;
+    case 'Backquote': ACT.bank(); break;
     case 'KeyT': send({ op: 'tap' }); break;
     case 'KeyG': ACT.quantum(); break;
     case 'KeyB': markQueued(focus, 'REV'); send({ op: 'track.rev', i: focus }); break;

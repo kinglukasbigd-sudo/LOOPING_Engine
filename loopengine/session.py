@@ -26,7 +26,10 @@ import tempfile
 import time
 
 KIND = "loopengine_session"
-VERSION = 1
+VERSION = 2
+# Formats this build still reads. 1 had sixteen key slots and no cues; its keys
+# land in bank A and its tracks come back with no cues, which is what they had.
+READS = (1, 2)
 EDGE = 1 << 20          # bytes hashed at each end of a file
 
 
@@ -140,9 +143,9 @@ def read(path):
         raise SessionError("%s could not be read — %s." % (name, e.strerror or e))
     if not isinstance(doc, dict) or KIND not in doc:
         raise SessionError("%s is not a LOOP ENGINE session." % name)
-    if doc[KIND] != VERSION:
-        raise SessionError("%s is session format %r; this build reads format %d."
-                           % (name, doc[KIND], VERSION))
+    if doc[KIND] not in READS:
+        raise SessionError("%s is session format %r; this build reads format %s."
+                           % (name, doc[KIND], " and ".join(str(v) for v in READS)))
     return doc
 
 

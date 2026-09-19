@@ -186,8 +186,8 @@ class Pad:
 
 class Engine:
     def __init__(self, samplerate=48000, blocksize=256, device=None,
-                 n_tracks=8, n_voices=16, n_pads=16, offline=False,
-                 memory_mb=1024):
+                 n_tracks=8, n_voices=16, n_pads=16, n_banks=4,
+                 offline=False, memory_mb=1024):
         self.blocksize = blocksize
         self.device = device
         self.offline = offline
@@ -226,7 +226,16 @@ class Engine:
 
         self.transport = Transport(self.sr, 124.0)
         self.tracks = [Track(i, blocksize) for i in range(n_tracks)]
-        self.pads = [Pad() for _ in range(n_pads)]
+        # Four banks of sixteen. The keys are a window onto the slots: the
+        # bank decides which sixteen the caps address, and nothing else moves.
+        # Switching is a change of address, never of content — a slot keeps its
+        # audio, and a voice already sounding is keyed by slot, so it plays on
+        # and its release still reaches it.
+        self.bank_size = n_pads
+        self.n_banks = max(1, int(n_banks))
+        self.pads = [Pad() for _ in range(n_pads * self.n_banks)]
+        self.bank = 0
+        self._held = [-1] * n_pads     # key position -> the slot it triggered
         self.voices = VoicePool(n_voices, blocksize)
 
         self.memory_limit = memory_mb * 1048576 if memory_mb else 0
@@ -440,6 +449,20 @@ class Engine:
     # ==================================================================
     # commands
     # ==================================================================
+    def slot_of(self, i):
+        """Key position (0-15) -> the slot it addresses in the bank showing now."""
+        return self.bank * self.bank_size + (int(i) % self.bank_size)
+
+    def bank_slots(self):
+        b = self.bank * self.bank_size
+        return range(b, b + self.bank_size)
+
+    def _pad_slot(self, kw):
+        sl = kw.get("sl")
+        if sl is None:
+            return self.slot_of(kw.get("i", 0))
+        return int(sl) % len(self.pads)
+
     def _drain(self):
         cmds = self.cmds
         now = time.perf_counter()
@@ -452,6 +475,11 @@ class Engine:
             self._lat_i = (self._lat_i + 1) % LAT_N
             if self._lat_n < LAT_N:
                 self._lat_n += 1
+            if op[:4] == "pad." and "sl" not in kw:
+                # Here, not in post(): the bank changes on this thread too, so
+                # resolving in arrival order is the only way a press made after
+                # a switch cannot land on the bank before it.
+                kw["sl"] = self.slot_of(kw.get("i", 0))
             if op in QUANTIZED and self.transport.playing and \
                     self.transport.quantum_beats > 0:
                 self._enqueue(op, kw)
@@ -475,11 +503,11 @@ class Engine:
         index) is removed by shifting the rest down and the new one goes to
         the back — the order edits arrived in is the order they apply."""
         ops, kws, n = self._q_op, self._q_kw, self._q_n
-        i = kw.get("i")
+        i = kw.get("sl", kw.get("i"))
         if i is not None:
             k = 0
             while k < n:
-                if ops[k] == op and kws[k].get("i") == i:
+                if ops[k] == op and kws[k].get("sl", kws[k].get("i")) == i:
                     j = k
                     while j < n - 1:
                         ops[j] = ops[j + 1]
@@ -730,9 +758,12 @@ class Engine:
         elif op == "transport.quantum":
             tr.quantum_i = int(kw["v"]) % len(QUANTA)
 
+        elif op == "pads.bank":
+            # Address only. No slot is touched and no voice is stopped.
+            self.bank = int(kw.get("b", 0)) % self.n_banks
         elif op == "pad.assign":
             # Settings only. Audio comes through pad.take.
-            p = self.pads[int(kw["i"]) % len(self.pads)]
+            p = self.pads[self._pad_slot(kw)]
             for f in ("mode", "gain", "pan", "speed", "quantize", "label",
                       "reverse"):
                 if f in kw:
@@ -741,7 +772,7 @@ class Engine:
             # Snapshot a track's CURRENT buffer and region onto a key. A
             # snapshot, not a link: later edits to the track must not reach
             # back and change the key.
-            p = self.pads[int(kw["i"]) % len(self.pads)]
+            p = self.pads[self._pad_slot(kw)]
             t = self._t({"i": kw.get("track", -1)})
             if t is None or t.src is None:
                 self.last_error = "Nothing to assign — that track is empty."
@@ -763,7 +794,7 @@ class Engine:
         elif op == "pad.load":
             # A key's own audio, put back by a session. Not taken from a track:
             # the track it came from may hold something else by now.
-            p = self.pads[int(kw["i"]) % len(self.pads)]
+            p = self.pads[self._pad_slot(kw)]
             buf = kw["buf"]
             if self.would_exceed(buf):
                 self.last_error = (
@@ -778,15 +809,28 @@ class Engine:
                 p.label = kw.get("label") or kw.get("name", "").split(".")[0][:12]
                 self.last_error = ""
         elif op == "pad.loop":
-            p = self.pads[int(kw["i"]) % len(self.pads)]
+            p = self.pads[self._pad_slot(kw)]
             p.set_loop(kw["ls"], kw["le"])
         elif op == "pad.clear":
-            self.voices.kill_pad(int(kw["i"]))
-            self.pads[int(kw["i"]) % len(self.pads)].clear()
+            s = self._pad_slot(kw)
+            self.voices.kill_pad(s)
+            self.pads[s].clear()
         elif op in ("pad.trigger", "pad.trigger.q"):
-            self._trigger_pad(int(kw["i"]))
+            s = self._pad_slot(kw)
+            pos = int(kw.get("i", 0)) % self.bank_size
+            if self._held[pos] >= 0 and self._held[pos] != s:
+                # the cap is being pressed again on another bank, so the note it
+                # is still holding gets its release now rather than never
+                self.voices.release_pad(self._held[pos])
+            self._held[pos] = s
+            self._trigger_pad(s)
         elif op == "pad.release":
-            self.voices.release_pad(int(kw["i"]))
+            # The slot the press went to, not the one this cap points at now:
+            # a bank switch while a key is down must not strand the voice.
+            pos = int(kw.get("i", 0)) % self.bank_size
+            s = self._held[pos]
+            self.voices.release_pad(self._pad_slot(kw) if s < 0 else s)
+            self._held[pos] = -1
         elif op == "panic":
             # ESC: the immediate cut. No fade, by design — it is the control
             # for when something has to be silent this block, clicks and all.
@@ -971,7 +1015,7 @@ class Engine:
         for k in range(self._q_n):
             kw = kws[k]
             if ops[k] == "pad.trigger.q" and kw is not None:
-                out.add(kw.get("i"))
+                out.add(kw.get("sl", kw.get("i")))
         return out
 
     def scope(self, points=512):
@@ -1033,10 +1077,15 @@ class Engine:
             "audio_limit_mb": round(self.memory_limit / 1048576.0, 0),
             "error": self.last_error,
             "tracks": [t.snapshot() for t in self.tracks],
-            "pads": [p.snapshot(i) for i, p in enumerate(self.pads)],
-            "pads_on": [self.voices.pad_active(i) for i in range(len(self.pads))],
-            "pads_pending": [i in self._pending_pads()
-                             for i in range(len(self.pads))],
+            "bank": self.bank,
+            "banks": self.n_banks,
+            # the sixteen the caps address, by position: the panel paints keys,
+            # not slots, and the slot each one stands for is the engine's business
+            "pads": [self.pads[s].snapshot(k)
+                     for k, s in enumerate(self.bank_slots())],
+            "pads_on": [self.voices.pad_active(s) for s in self.bank_slots()],
+            "pads_pending": [s in self._pending_pads()
+                             for s in self.bank_slots()],
         }
 
 

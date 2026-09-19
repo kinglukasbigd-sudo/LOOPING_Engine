@@ -274,6 +274,102 @@ def t_an_unassigned_key_has_no_span_to_draw():
           snap["name"] == "", repr(snap["name"]))
 
 
+# --------------------------------------------------------------------------
+def t_a_bank_is_an_address_not_a_move():
+    """Switching changes which sixteen slots the caps reach. Nothing else."""
+    e = engine()
+    load(e, 0, tone(300.0), "first.wav")
+    e.post("track.loop", i=0, ls=1000, le=21000)
+    e.render_offline(256)
+    e.post("pad.take", i=0, track=0)
+    e.render_offline(256)
+    was = e.pads[0].snapshot(0)
+    e.post("pads.bank", b=1)
+    e.render_offline(256)
+    check("the bank moved and the slot it left did not",
+          e.bank == 1 and e.pads[0].snapshot(0) == was)
+    check("the same cap now reaches an empty slot",
+          not e.pads[e.bank_size].loaded and not e.snapshot()["pads"][0]["loaded"])
+    e.post("pad.take", i=0, track=0, ls=2000, le=9000)
+    e.render_offline(256)
+    check("assigning on bank B fills bank B",
+          e.pads[e.bank_size].loaded
+          and (e.pads[e.bank_size].loop_start, e.pads[e.bank_size].loop_end) == (2000, 9000))
+    check("and bank A still holds what it held",
+          e.pads[0].snapshot(0) == was)
+    e.post("pads.bank", b=0)
+    e.render_offline(256)
+    check("switching back shows bank A again",
+          e.snapshot()["pads"][0]["ls"] == 1000 and e.snapshot()["bank"] == 0)
+
+
+def t_a_key_released_after_a_bank_switch_still_stops():
+    """The hand holds a cap, the other hand switches. The release must reach
+    the voice that press started, or the note hangs on a bank nobody sees."""
+    e = engine()
+    load(e, 0, tone(300.0), "first.wav")
+    e.post("track.loop", i=0, ls=0, le=40000)
+    e.render_offline(256)
+    e.post("pad.take", i=0, track=0)
+    e.post("pad.assign", i=0, mode="GATE", gain=1.0)
+    e.render_offline(256)
+    e.post("pad.trigger", i=0)
+    e.render_offline(256)
+    check("the key is sounding", e.voices.pad_active(0))
+    e.post("pads.bank", b=2)
+    e.render_offline(256)
+    check("a bank switch does not stop it", e.voices.pad_active(0))
+    e.post("pad.release", i=0)
+    e.render_offline(4096)                 # past the 4 ms release
+    check("and the release reaches the voice it started",
+          not e.voices.pad_active(0) and e.voices.used() == 0)
+
+
+def t_the_ceiling_counts_every_bank():
+    """Audio pinned on a bank nobody is looking at is still audio held."""
+    e = engine(memory_mb=1)
+    big = tone(300.0, n=SR * 2)            # 2 s stereo float32 ~ 0.7 MB
+    load(e, 0, big, "big.wav")
+    e.render_offline(256)
+    e.post("pad.take", i=0, track=0, ls=0, le=big.shape[0])
+    e.render_offline(256)
+    held = e.audio_bytes()
+    e.post("pads.bank", b=3)
+    e.render_offline(256)
+    check("what a hidden bank pins still counts", e.audio_bytes() == held)
+    e.post("track.clear", i=0)
+    e.render_offline(256)
+    check("and it is the key holding it, not the track",
+          e.audio_bytes() == held and e.pads[0].loaded)
+
+
+def t_a_voice_is_keyed_by_slot():
+    """Two banks, the same cap, both sounding: each release finds its own."""
+    e = engine()
+    load(e, 0, tone(300.0), "first.wav")
+    e.post("track.loop", i=0, ls=0, le=40000)
+    e.render_offline(256)
+    e.post("pad.take", i=0, track=0)
+    e.post("pad.assign", i=0, mode="GATE", gain=1.0)
+    e.render_offline(256)
+    e.post("pad.trigger", i=0)
+    e.render_offline(256)
+    e.post("pads.bank", b=1)
+    e.post("pad.take", i=0, track=0)
+    e.post("pad.assign", i=0, mode="GATE", gain=1.0)
+    e.render_offline(256)
+    e.post("pad.trigger", i=0)
+    e.render_offline(256)
+    check("the cap pressed on another bank sounds its own slot",
+          e.voices.pad_active(e.bank_size))
+    e.render_offline(4096)                 # past the release ramp
+    check("and the note it was still holding was let go, not stranded",
+          not e.voices.pad_active(0) and e.voices.pad_active(e.bank_size))
+    e.post("pad.release", i=0)
+    e.render_offline(4096)
+    check("releasing stops every voice the cap started", e.voices.used() == 0)
+
+
 if __name__ == "__main__":
     for fn in (t_a_key_keeps_its_audio_across_a_track_change,
                t_the_snapshot_is_not_a_live_link,
@@ -284,7 +380,11 @@ if __name__ == "__main__":
                t_clearing_a_key_releases_its_hold,
                t_key_state_serialises,
                t_a_key_reports_the_four_numbers_its_rule_is_drawn_from,
-               t_an_unassigned_key_has_no_span_to_draw):
+               t_an_unassigned_key_has_no_span_to_draw,
+               t_a_bank_is_an_address_not_a_move,
+               t_a_key_released_after_a_bank_switch_still_stops,
+               t_the_ceiling_counts_every_bank,
+               t_a_voice_is_keyed_by_slot):
         try:
             fn()
         except Exception as exc:

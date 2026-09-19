@@ -780,6 +780,32 @@ def t_the_view_gestures_move_nothing(page):
     focus_track(page, 0)
 
 
+def t_a_bank_switch_moves_the_address_not_the_audio(page):
+    """Four banks of the same sixteen caps: the keys point elsewhere and no
+    slot is touched. Order matters here — it runs after a key has been given
+    something, so there is audio on bank A to come back to."""
+    closed(page)
+    on_a = key(page, 0)
+    before = page.evaluate("document.querySelector('#bank-now').textContent")
+    press(page, "`")
+    page.wait_for_function("S.bank === 1", timeout=10000)
+    paint(page)
+    check("the box says which bank the keys are on",
+          before == "A"
+          and page.evaluate("document.querySelector('#bank-now').textContent") == "B")
+    check("and the sixteen caps now reach sixteen empty slots",
+          pads(page) == ["empty"] * 16, str(pads(page)[:2]))
+    press(page, "`")
+    press(page, "`")
+    press(page, "`")
+    page.wait_for_function("S.bank === 0", timeout=10000)
+    paint(page)
+    check("cycling back shows bank A holding exactly what it held",
+          key(page, 0) == on_a
+          and page.evaluate("document.querySelector('#bank-now').textContent") == "A",
+          "%s vs %s" % (key(page, 0), on_a))
+
+
 if __name__ == "__main__":
     base = tempfile.mkdtemp(prefix="le-panel-ui-")
     server = Panel(base)
@@ -802,6 +828,7 @@ if __name__ == "__main__":
             page.goto(server.url)
             ready(page)
             for fn in (t_assign_keeps_what_the_key_was_given,
+                       t_a_bank_switch_moves_the_address_not_the_audio,
                        t_map_asks_and_mode_is_only_a_mode,
                        t_clearing_a_key,
                        t_feedback_lands_before_the_send,

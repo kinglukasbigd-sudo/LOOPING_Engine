@@ -259,8 +259,11 @@ def t_map_asks_before_it_replaces_assigned_keys():
         p = Panel(d)
         p.load(0, hats)
         p.send("pads.map", track=0, mode="ONE")
-        check("with every key empty, MAP fills them without asking",
-              all(q.loaded for q in p.e.pads) and p.e.pads[0].name == "hats.wav")
+        check("with every key empty, MAP fills this bank without asking",
+              all(p.e.pads[s].loaded for s in p.e.bank_slots())
+              and p.e.pads[0].name == "hats.wav")
+        check("and leaves the banks it is not showing alone",
+              not any(q.loaded for q in p.e.pads[p.e.bank_size:]))
 
         p2 = Panel(d)
         p2.load(0, bass)
@@ -274,7 +277,8 @@ def t_map_asks_before_it_replaces_assigned_keys():
               p2.e.last_error[:70])
         p2.send("pads.map", track=0, mode="ONE", confirm=True)
         check("and the second press, which carries confirm, does it",
-              all(q.loaded for q in p2.e.pads) and p2.e.pads[0].name == "hats.wav"
+              all(p2.e.pads[s].loaded for s in p2.e.bank_slots())
+              and p2.e.pads[0].name == "hats.wav"
               and p2.e.pads[0].slice == 0)
     finally:
         shutil.rmtree(d, ignore_errors=True)
