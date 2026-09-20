@@ -50,14 +50,12 @@ class Transport:
         whatever the player edited in the meantime. Quantising against a clock
         that is not running is meaningless, so every moment is an edge.
         """
-        return self.frames_to_grid(self.quantum_beats)
-
-    def frames_to_grid(self, beats: float) -> int:
-        """The same question for any division of the beat, which is what a
-        loop roll waits on: it has its own grid, not the launch quantum's."""
-        if not self.playing or beats <= 0.0:
+        if not self.playing:
             return 0
-        qs = self.spb * beats
+        q = self.quantum_beats
+        if q <= 0.0:
+            return 0
+        qs = self.spb * q
         r = self.pos % qs
         if r < 1.0 or (qs - r) < 1.0:
             return 0

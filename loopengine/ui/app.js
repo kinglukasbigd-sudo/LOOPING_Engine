@@ -74,8 +74,6 @@ const HELP = {
   pmode:   ['WHOSE MODE',        'What ONE / GATE / LOOP act on: the key being edited, or the mode a key takes when you assign it.'],
   cues:    ['HOT CUES',          'Eight marks in this track. Press an empty one to drop it where the playhead is, press a set one to jump there, CTRL-press to clear it. Jumps wait for the quantum.'],
   jump:    ['BEAT JUMP',         'Slides the loop window without changing its length. 7 and 8 do the same by one beat.'],
-  fx:      ['HOLD FX',           'Hold K, or hold the button, for a tempo-synced echo on the master. Let go and the input stops feeding it; what is in there rings out.'],
-  roll:    ['LOOP ROLL',         'Hold H to stutter the focused track in place. Let go and it carries on exactly where it would have been. The button picks the length.'],
   session: ['SESSION',           'SAVE writes every track, key, region and zoom to a file. OPEN puts a set back.'],
   record:  ['RECORD',            'REC arms a take of the master output. RUN starts it, or it starts at once if the clock runs. REC again writes the file.'],
 };
@@ -92,15 +90,6 @@ let assignArmed = false;   // next key pressed takes the focused track's region
    with no clock, like every other question this panel asks: it is the file the
    next track press loads, and Esc leaves it on disk. */
 let takeReady = null;
-/* Loop Roll. The length is the panel's to choose and the engine's to apply;
-   the track that was rolled is remembered so the release reaches it even if
-   the focus bar has moved on in between. */
-const ROLLS = [0.125, 0.25, 0.5, 1];
-const ROLL_CAPS = ['1/8', '1/4', '1/2', '1'];
-let rollBeats = 0.25;
-let rollTrack = -1;
-let echoHeld = false;
-function rollLabel(b) { const i = ROLLS.indexOf(b); return i < 0 ? '1/4' : ROLL_CAPS[i]; }
 let editKeys = false;      // clicking a pad focuses it instead of firing it
 const padPeaks = {};       // SLOT -> its own envelope, across every bank
 /* What the waveform panel is looking at: one view per track and per key,
@@ -295,32 +284,6 @@ function paintKeySpan(el, i, ls, le, frames) {
   spanCache[i] = k;
   el.style.setProperty('--rs', (a * 100).toFixed(3) + '%');
   el.style.setProperty('--re', ((1 - b) * 100).toFixed(3) + '%');
-}
-
-/* Hold FX. The press and the release are two halves of one gesture, so this
-   is not an ACT — a click is the wrong shape for it. */
-function echoSet(on) {
-  if (on === echoHeld) return;
-  echoHeld = on;
-  predict('echo', on);
-  paintEcho(on);                                       // paint first
-  send({ op: 'master.echo', on });
-}
-function paintEcho(on) {
-  const line = $('#fx-line'), b = $('#fx-echo');
-  if (b) b.setAttribute('aria-pressed', !!on);
-  if (!line) return;
-  setText(line, on ? 'echo' : 'hold K');
-  line.classList.toggle('armed', !!on);
-}
-
-/* The rail's roll box. Reserved, like every other line on the rail: it says
-   what the hold is doing, and nothing below it moves when that changes. */
-function paintRoll(beats) {
-  const line = $('#roll-line');
-  if (!line) return;
-  setText(line, beats > 0 ? 'rolling ' + rollLabel(beats) : 'hold H');
-  line.classList.toggle('armed', beats > 0);
 }
 
 /* One place that knows whether an edit goes to a track or a key. */
@@ -1088,8 +1051,6 @@ function renderState() {
   setText($('#bank-now'), 'ABCD'[settled('bank', S.bank || 0)] || 'A');
   buildCues();
   paintCues();
-  paintRoll(settled('roll', (S.tracks[rollTrack >= 0 ? rollTrack : focus] || {}).roll || 0));
-  paintEcho(settled('echo', !!S.echo));
 
   S.tracks.forEach((t, i) => {
     const el = $$('#strips .strip')[i];
@@ -1886,10 +1847,6 @@ const ACT = {
   jbeatf: () => { markQueued(focus, 'LOOP'); send({ op: 'track.loop.nudge', i: focus, v: 1 }); },
   jbarb: () => { markQueued(focus, 'LOOP'); send({ op: 'track.loop.nudge', i: focus, v: -4 }); },
   jbarf: () => { markQueued(focus, 'LOOP'); send({ op: 'track.loop.nudge', i: focus, v: 4 }); },
-  rolllen: () => {
-    rollBeats = ROLLS[(ROLLS.indexOf(rollBeats) + 1) % ROLLS.length];
-    setText($('#roll-len'), rollLabel(rollBeats));      // paint first
-  },
   mappads: () => {
     const taken = S ? S.pads.filter(p => p.loaded).length : 0;
     if (taken && !mapArmed) {
@@ -1933,12 +1890,6 @@ document.addEventListener('mouseup', (e) => {
   const b = e.target.closest('button');
   if (b) b.blur();          // otherwise SPACE re-fires the last button clicked
 });
-/* The FX button is held, not clicked: down is on, and anything that ends the
-   press — up, leaving the button, the window going away — is off. */
-document.addEventListener('mousedown', (e) => {
-  if (e.button === 0 && e.target.closest('#fx-echo')) echoSet(true);
-});
-document.addEventListener('mouseup', () => echoSet(false));
 document.addEventListener('click', (e) => {
   const b = e.target.closest('[data-act]');
   /* An armed confirmation waits for its own press and nothing else, so any
@@ -2019,17 +1970,6 @@ window.addEventListener('keydown', (e) => {
     case 'Backquote': ACT.bank(); break;
     case 'KeyT': send({ op: 'tap' }); break;
     case 'KeyG': ACT.quantum(); break;
-    case 'KeyK': e.preventDefault(); if (!e.repeat) echoSet(true); break;
-    /* Hold to roll, let go to carry on. Not through ACT: it is a press and a
-       release, and the release has to reach the track the press went to. */
-    case 'KeyH':
-      e.preventDefault();
-      if (rollTrack >= 0 || e.repeat) break;
-      rollTrack = focus;
-      predict('roll', rollBeats);                      // paint first
-      paintRoll(rollBeats);
-      send({ op: 'track.roll.on', i: rollTrack, beats: rollBeats });
-      break;
     case 'KeyB': markQueued(focus, 'REV'); send({ op: 'track.rev', i: focus }); break;
     case 'ArrowLeft':  e.preventDefault(); nudgeHandle(-1, e.shiftKey); break;
     case 'ArrowRight': e.preventDefault(); nudgeHandle(+1, e.shiftKey); break;
@@ -2065,25 +2005,13 @@ window.addEventListener('keydown', (e) => {
     case 'Slash': if (e.shiftKey) { e.preventDefault(); ACT.help(); } break;
   }
 });
-function rollOff() {
-  if (rollTrack < 0) return;
-  const i = rollTrack;
-  rollTrack = -1;
-  predict('roll', 0);
-  paintRoll(0);                                        // paint first
-  send({ op: 'track.roll.off', i });
-}
 window.addEventListener('keyup', (e) => {
-  if (codeOf(e) === 'KeyH') rollOff();
-  if (codeOf(e) === 'KeyK') echoSet(false);
   const pi = PAD_CODES.indexOf(codeOf(e));
   if (pi >= 0 && down.has(codeOf(e))) { down.delete(codeOf(e)); releasePad(pi); }
 });
 window.addEventListener('blur', () => {
   down.forEach(c => releasePad(PAD_CODES.indexOf(c)));
   down.clear();
-  rollOff();                       // a key held when the window goes away
-  echoSet(false);
 });
 
 /* ── file browser (replaces the pad grid — no modal) ─────────────────── */

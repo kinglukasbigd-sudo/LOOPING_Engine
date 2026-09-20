@@ -32,8 +32,7 @@ class Track:
         "playing", "reverse", "mute", "solo", "gain", "pan", "speed",
         "xfade", "slices", "bpm", "bpm_conf", "peak", "rms", "_g", "_gl",
         "_gr", "_w", "fired", "queued", "analysing", "stopping",
-        "roll_beats", "roll_armed", "roll", "roll_start", "roll_shadow",
-        "_rfade", "_rxf", "_rtail", "cues",
+        "cues",
     )
 
     def __init__(self, index: int, blocksize: int):
@@ -70,22 +69,9 @@ class Track:
         self.fired = 0             # bumped when a queued change lands
         self.queued = None         # human-readable label of what's pending
         self.analysing = False     # buffer is in and playable; bpm/slices pending
-        # Loop Roll. Temporary state, never an edit: `roll` is the window
-        # length in this file's frames while one is running, `roll_start` where
-        # that window begins, and `roll_shadow` where the phase would have been
-        # all along — which is where the release puts it back. The loop points
-        # are not touched by any of it.
         # Eight hot cues, in source samples. -1 is an empty one. Aiming
         # points, like the slice marks: setting one never moves a loop point.
         self.cues = np.full(CUES, -1, dtype=np.int64)
-        self.roll_beats = 0.0      # length asked for, in beats of the clock
-        self.roll_armed = False    # waiting for its own grid line
-        self.roll = 0
-        self.roll_start = 0
-        self.roll_shadow = 0.0
-        self._rfade = 0            # frames of release tail still to fade
-        self._rxf = 0
-        self._rtail = 0.0
 
     # -- loading -----------------------------------------------------------
     def load(self, buf: np.ndarray, sr: int, name: str, path: str,
@@ -109,13 +95,11 @@ class Track:
         self.phase = 0.0
         self.xfade = int(xfade_ms * 0.001 * sr)
         self.cues[:] = -1              # a new file has nobody's cues on it
-        self.roll_cancel()
         self._w = dsp.Work(self.blocksize, self.channels)
 
     def clear(self):
         self.playing = False
         self.cues[:] = -1
-        self.roll_cancel()
         self.src = None
         self.variants = {}
         self.stopping = False
@@ -157,21 +141,10 @@ class Track:
             step = -step
 
         w = self._w
-        # A roll plays a short window of the material just heard. Same gather,
-        # same seam crossfade — the window is the only thing that differs, and
-        # the loop points behind it are untouched.
-        if self.roll > 0:
-            rs = self.roll_start
-            RL = self.roll
-        else:
-            rs = self.loop_start
-            RL = L
-        y, rel = dsp.loop_gather(buf, rs, RL, self.phase, step, n, w)
-        xf = min(self.xfade, RL // 4, max(0, self.frames - (rs + RL)))
+        y, rel = dsp.loop_gather(buf, self.loop_start, L, self.phase, step, n, w)
+        xf = min(self.xfade, L // 4, max(0, self.frames - self.loop_end))
         if xf > 0 and not self.reverse:
-            y = dsp.seam_blend(buf, y, rel, rs, RL, xf, self.frames, w)
-        if self._rfade > 0:
-            y = self._roll_tail(buf, y, n, step)
+            y = dsp.seam_blend(buf, y, rel, self.loop_start, L, xf, self.frames, w)
 
         # Linear gain ramp across the block. 6ms-ish to target, no clicks.
         g0 = self._g
@@ -191,11 +164,8 @@ class Track:
         self.peak = pk if pk > self.peak else self.peak * 0.72
         self.rms = float(np.sqrt(np.mean(yg * yg))) if n else 0.0
 
-        self.phase = rs + ((self.phase - rs + step * n) % RL)
-        if self.roll > 0:
-            # what the phase would be doing if nobody had pressed anything
-            self.roll_shadow = self.loop_start + (
-                (self.roll_shadow - self.loop_start + step * n) % L)
+        self.phase = self.loop_start + (
+            (self.phase - self.loop_start + step * n) % L)
 
         # A stop is a fade, not a cut. Setting playing False mid-waveform stepped
         # the output 26x the largest step in the audio itself — a click on every
@@ -204,77 +174,6 @@ class Track:
         if self.stopping and self._g < STOP_FLOOR:
             self.playing = self.stopping = False
             self._g = 0.0
-            self.roll_cancel()
-
-    def _roll_tail(self, buf, y, n, step):
-        """The roll's own continuation, fading out under the resumed stream.
-
-        The same equal-power shape the loop seam uses, and the same reasoning:
-        for the first few milliseconds after the jump, mix in the material that
-        would have played had the roll kept running. Past the fade the output
-        is the resumed stream and nothing else, sample for sample.
-        """
-        xf = self._rxf
-        k = n if self._rfade > n else self._rfade
-        w = self._w
-        pos = w.k[:k] * step + self._rtail
-        idx = pos.astype(np.int64)
-        np.clip(idx, 0, self.frames - 1, out=idx)
-        cont = buf[idx]
-        ph = ((w.k[:k] + (xf - self._rfade)) * (1.0 / xf)).astype(np.float32)[:, None]
-        ph *= np.pi / 2.0
-        y[:k] = y[:k] * np.sin(ph) + cont * np.cos(ph)
-        self._rtail += step * k
-        self._rfade -= k
-        return y
-
-    # -- loop roll ---------------------------------------------------------
-    def roll_arm(self, beats: float) -> bool:
-        """Ask for a roll. It starts on the next line of its own grid."""
-        if self.src is None or self.loop_len < MIN_LOOP:
-            return False
-        self.roll_beats = max(0.0, float(beats))
-        self.roll_armed = self.roll_beats > 0.0
-        return self.roll_armed
-
-    def roll_begin(self, spb: float, engine_sr: int):
-        """On the line: loop the roll length just played, and start a shadow
-        phase that goes on exactly as if none of this were happening."""
-        self.roll_armed = False
-        L = self.loop_len
-        if self.src is None or not self.playing or L < MIN_LOOP:
-            self.roll_beats = 0.0
-            return
-        step = abs(self.speed * (self.sr / float(engine_sr)))
-        rf = int(round(self.roll_beats * spb * step))
-        rf = max(MIN_LOOP, min(rf, L))
-        u = (self.phase - self.loop_start) % L
-        self.roll_shadow = self.phase
-        self.roll_start = int(self.loop_start + ((u - rf) % L))
-        self.roll = rf
-
-    def roll_release(self):
-        """Back to where playback had got to, now, through the seam fade."""
-        self.roll_armed = False
-        self.roll_beats = 0.0
-        if self.roll <= 0:
-            return
-        xf = min(self.xfade, self.roll // 4)
-        if xf > 0 and not self.reverse:
-            self._rxf = xf
-            self._rfade = xf
-            self._rtail = self.phase
-        self.phase = self.roll_shadow
-        self.roll = 0
-
-    def roll_cancel(self):
-        """Stop or panic. The roll simply is not, and leaves no tail behind."""
-        if self.roll > 0:
-            self.phase = self.roll_shadow
-        self.roll = 0
-        self.roll_armed = False
-        self.roll_beats = 0.0
-        self._rfade = 0
 
     # -- edits -------------------------------------------------------------
     def set_pan(self, pan: float):
@@ -314,11 +213,7 @@ class Track:
         self.loop_start, self.loop_end = start, end
 
         L = end - start
-        if self.roll > 0:
-            # the roll keeps its window; what wraps is the playback it stands in for
-            if not (start <= self.roll_shadow < end):
-                self.roll_shadow = start + ((self.roll_shadow - start) % L)
-        elif not (start <= self.phase < end):
+        if not (start <= self.phase < end):
             self.phase = start + ((self.phase - start) % L)
 
     def scale_loop(self, factor: float):
@@ -328,11 +223,10 @@ class Track:
 
     # -- hot cues ----------------------------------------------------------
     def cue_set(self, c: int):
-        """Where the playhead is now. While rolling, where playback really is."""
+        """Where the playhead is now."""
         if self.src is None or not 0 <= c < CUES:
             return
-        p = self.roll_shadow if self.roll > 0 else self.phase
-        self.cues[c] = int(max(0, min(self.frames - 1, int(p))))
+        self.cues[c] = int(max(0, min(self.frames - 1, int(self.phase))))
 
     def cue_clear(self, c: int):
         if 0 <= c < CUES:
@@ -357,8 +251,6 @@ class Track:
         else:
             self.nudge_loop(p - self.loop_start)
             self.phase = float(self.loop_start)
-        if self.roll > 0:
-            self.roll_shadow = self.phase      # the roll ends where the cue is
 
     def nudge_loop(self, frames: int):
         """Slide the whole loop window without changing its length."""
@@ -375,7 +267,6 @@ class Track:
         return {
             "i": self.index,
             "name": self.name,
-            "roll": round(self.roll_beats, 4) if (self.roll or self.roll_armed) else 0,
             "cues": [int(x) for x in self.cues],
             "path": self.path,
             "loaded": self.src is not None,

@@ -82,8 +82,6 @@ once a device is there — you just can't hear it.
                                       [ / ]   previous / next track
                                       L       load a file
                                       `       key bank A B C D
-                                      H       hold: loop roll
-                                      K       hold: echo
                                       ESC     panic, cut everything now
 ```
 
@@ -149,18 +147,6 @@ to start there and keeps its length, which is the same operation as a beat jump.
 Setting or clearing one moves no loop point, and the marks on the waveform are
 ink ticks — the accent is already carrying the region. Beat jump slides that
 window by a beat (`7` `8`, or the buttons) or by a bar (`,` `.`).
-
-**Hold H for a loop roll.** The focused track stutters in place on the next line
-of the roll's own grid — 1/8, 1/4, 1/2 or a beat, picked on the rail — looping
-the length just played. Let go and playback carries on exactly where it would
-have been: a shadow phase runs the whole time as if nobody had pressed anything,
-and the release lands on it through the same seam crossfade the loop uses. The
-stored loop points are never touched. Rendered twice, with and without a roll,
-the two outputs are identical sample for sample once the release fade is past.
-
-**Hold K for the echo.** A tempo-synced quarter-beat delay with feedback on the
-master bus, from one ring allocated at startup. Release stops the input feeding
-it and what is in there rings out. ESC takes the tail with it.
 
 ## Looping a vocal out of a stereo mix
 
@@ -326,7 +312,7 @@ PYTHONPATH=.pylibs python3 -m tests     # with the vendored dependencies
 python3 -m tests                        # with installed ones
 ```
 
-493 checks in 19 files, about 79 seconds on the machine they were written on —
+467 checks in 17 files, about 61 seconds on the machine they were written on —
 more than half of that the browser file, which is the only one that starts a
 server and drives a real page.
 Each file runs in its own process and prints PASS, FAIL or SKIP for every check,
