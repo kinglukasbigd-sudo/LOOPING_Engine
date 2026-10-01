@@ -577,8 +577,10 @@ function buildStrips(n) {
       <span class="c-bpm">—</span>
       <span class="c-len">—</span>
       <span class="c-meter"><canvas></canvas></span>
-      <span class="c-gain"><input class="slider" type="range" min="0" max="1.4" step="0.005"></span>
-      <span class="c-pan"><input class="slider" type="range" min="-1" max="1" step="0.02"></span>
+      <span class="c-gain"><input class="slider" type="range" min="0" max="1.4" step="0.005"
+             aria-label="Volume, track ${i + 1}"></span>
+      <span class="c-pan"><input class="slider" type="range" min="-1" max="1" step="0.02"
+             aria-label="Left to right, track ${i + 1}"></span>
       <span class="c-btns">
         <button class="btn" data-t="mute" aria-label="Mute track ${i + 1}">M</button>
         <button class="btn" data-t="solo" aria-label="Solo track ${i + 1}">S</button>

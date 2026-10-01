@@ -50,7 +50,8 @@
         <div id="bpm" class="big">124.00</div>
         <button class="btn tall" data-act="tap">TAP</button>
       </div>
-      <input id="bpm-slider" class="slider" type="range" min="60" max="200" step="0.25" value="124">
+      <input id="bpm-slider" class="slider" type="range" min="60" max="200" step="0.25" value="124"
+             aria-label="Tempo, beats a minute">
     </div>
 
     <div class="rail-block">
@@ -83,7 +84,8 @@
       <div class="val-row">
         <div id="master-db" class="big">-3.1</div><span class="unit">dB</span>
       </div>
-      <input id="master" class="slider" type="range" min="0" max="1.2" step="0.005" value="0.7">
+      <input id="master" class="slider" type="range" min="0" max="1.2" step="0.005" value="0.7"
+             aria-label="Master output level">
       <div class="master-meters">
         <canvas id="mmeter" width="44" height="150" role="img"
                 aria-label="Master output level, left and right"></canvas>

@@ -170,14 +170,19 @@
 
   /* Dimming is opacity on the ink. Never a new hue.
 
-     Two of these are for text and one is not. Ink at 0.30 on the panel ground
-     is 2.2:1 against it — under every contrast floor there is, and it was
-     carrying the rail's lines, the units and the key caps. Text that was on
-     --dim2 is on --dim-text, which is the dimmest ink that still clears 4.5:1;
-     --dim2 stays exactly as it was for the things that are not text. */
+     Two scales, because the eye and the contrast floor want different numbers.
+     --dim1 and --dim2 are what the CANVAS draws with: the dimmed ends of a
+     waveform, the slice marks, the beat grid. Marks, not words, and no floor
+     applies to them.
+
+     --text-dim1 and --text-dim2 are for TEXT, and both clear 4.5:1 on either
+     ground: 8.3:1 and 5.4:1. They also keep the order the panel reads in, which
+     the first pass at this got backwards — text on 0.30 went to 0.62, which put
+     the dimmest words on the panel ABOVE the middle ones at 0.55. */
   --dim1: 0.55;
   --dim2: 0.30;
-  --dim-text: 0.62;
+  --text-dim1: 0.80;
+  --text-dim2: 0.62;
 
   /* --- GEOMETRY --------------------------------------------------------- */
   --r: 0px;
