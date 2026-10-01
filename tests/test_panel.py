@@ -862,6 +862,50 @@ def t_a_cue_is_set_then_jumped_then_cleared(page):
           page.evaluate("S.tracks[0].cues.filter(c => c >= 0).length") == 0)
 
 
+def t_a_focused_key_says_what_it_is_showing(page):
+    """A track's row carries the view; a key had nowhere to carry it, so zooming
+    one was the place you could lose your bearings."""
+    closed(page)
+    if page.evaluate("!S.pads[0].loaded"):
+        return check("a key to look at", False, "key 1 holds nothing")
+    toggle(page, "editkeys", True)
+    page.click("#padgrid .pad >> nth=0")
+    paint(page)
+    cell = lambda: page.evaluate(
+        "document.querySelectorAll('#padgrid .pad')[0].className")
+    check("whole file in view, the cell says nothing about it", "zoomed" not in cell())
+    press(page, "Equal")
+    press(page, "Equal")
+    page.wait_for_timeout(120)
+    paint(page)
+    span = page.evaluate("() => { const el = document.querySelectorAll('#padgrid .pad')[0];"
+                         " return [el.className, el.style.getPropertyValue('--vs'),"
+                         " el.style.getPropertyValue('--ve')]; }")
+    check("zoomed in, its top rule lights the part it is showing",
+          "zoomed" in span[0] and span[1] and span[2], str(span))
+
+    before_v = page.evaluate("() => { const v = viewOf(subject()); return [v.vs, v.ve]; }")
+    before_r = page.evaluate("[S.pads[0].ls, S.pads[0].le]")
+    page.evaluate("window.__sent = []")
+    drag(page, "#padgrid .pad >> nth=0", 20, 70)
+    paint(page)
+    after_v = page.evaluate("() => { const v = viewOf(subject()); return [v.vs, v.ve]; }")
+    check("dragging the cell scrolls the panel",
+          after_v[0] != before_v[0] and round(after_v[1] - after_v[0])
+          == round(before_v[1] - before_v[0]), "%s -> %s" % (before_v, after_v))
+    check("and touches neither the region nor the engine",
+          page.evaluate("[S.pads[0].ls, S.pads[0].le]") == before_r
+          and not [x for x in page.evaluate("window.__sent")
+                   if "pad.loop" in x["data"] or "trigger" in x["data"]],
+          str(page.evaluate("[S.pads[0].ls, S.pads[0].le]")))
+    press(page, "Digit0")
+    toggle(page, "editkeys", False)
+    page.evaluate("focusKind = 'track'; renderState()")
+    paint(page)
+    check("and with the key no longer the subject, the cell says nothing again",
+          "zoomed" not in cell())
+
+
 if __name__ == "__main__":
     base = tempfile.mkdtemp(prefix="le-panel-ui-")
     server = Panel(base)
@@ -886,6 +930,7 @@ if __name__ == "__main__":
             for fn in (t_assign_keeps_what_the_key_was_given,
                        t_a_bank_switch_moves_the_address_not_the_audio,
                        t_a_cue_is_set_then_jumped_then_cleared,
+                       t_a_focused_key_says_what_it_is_showing,
                        t_map_asks_and_mode_is_only_a_mode,
                        t_clearing_a_key,
                        t_feedback_lands_before_the_send,

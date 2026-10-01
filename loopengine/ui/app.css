@@ -481,6 +481,19 @@ kbd {
   min-width: var(--s2);      /* a 64-frame region must not vanish entirely */
   height: var(--hair); background: var(--accent);   /* ACCENT 3 — region */
 }
+/* And the view, on the opposite edge. A track's row says which part of the file
+   the panel is showing; the key being edited says it here, on its top rule, in
+   ink — the region already has the bottom rule and the accent. Zoomed, the cell
+   is a handle: drag it and the panel scrolls, exactly as a row does. */
+.pad.zoomed { cursor: grab; }
+.pad.zoomed::before {
+  content: ""; position: absolute; top: 0;
+  left: min(var(--vs, 0%), calc(100% - var(--s2)));
+  right: var(--ve, 100%);
+  min-width: var(--s2);
+  height: var(--hair); background: var(--fg); pointer-events: none;
+}
+
 /* Nothing assigned, nothing to say: the plain hairline stands. */
 .pad.unmapped::after { content: none; }
 /* A held cell inverts, and the rule inverts with it. Accent on bone is 2.3:1

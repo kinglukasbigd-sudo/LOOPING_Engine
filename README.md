@@ -127,7 +127,10 @@ that lands on them, so tuning an edge never starts a new region.
 Panning is SHIFT: SHIFT-drag on the waveform, SHIFT-scroll, or the middle
 button. It also has a home of its own — while zoomed, the track's row lights the
 part of the file in view on its bottom rule, and dragging that row scrolls the
-panel. The waveform is for choosing, the strip is for navigating. Scroll zooms
+panel. A key says the same thing on its own cell: with EDIT on, the key being
+edited lights the part it is showing along its **top** rule, with the region on
+the bottom one, and dragging the cell scrolls it. Only while EDIT is on — with
+EDIT off a press on a pad is a note, and nothing takes that press away from it. The waveform is for choosing, the strip is for navigating. Scroll zooms
 around the pointer. Double click does nothing: it used to set the loop to the
 whole file, and it was the one gesture here that could wipe a hand-tuned region
 by accident, since two presses in the same place is what a hesitant hand does.

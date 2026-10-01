@@ -76,7 +76,7 @@ const HELP = {
   pan:     ['LEFT / RIGHT',      'Drag to place this track in the stereo field.'],
   msr:     ['MUTE SOLO REVERSE', 'Mute, solo, and play backwards. Reverse waits for the quantum.'],
   q:       ['WAITING',           'Shows what this track is waiting to do at the next boundary.'],
-  pads:    ['KEYS',              'Each key holds its own sound and loop, and keeps them when you change the track.'],
+  pads:    ['KEYS',              'Each key holds its own sound and loop, and keeps them when you change the track. With EDIT on, the key being edited shows the part of its file you are looking at along its top rule, and dragging the cell scrolls it.'],
   bank:    ['KEY BANK',          'Four banks of the same sixteen keys. Switching changes what the keys point at, never what a key holds. ` cycles.'],
   pmode:   ['WHOSE MODE',        'What ONE / GATE / LOOP act on: the key being edited, or the mode a key takes when you assign it.'],
   cues:    ['HOT CUES',          'Eight marks in this track, on Y U I O and H J K ; — press an empty one to drop it where the playhead is, press a set one to jump there, SHIFT to clear it. Jumps wait for the quantum.'],
@@ -522,6 +522,31 @@ function paintMinimap(cell, i, t) {
   }
 }
 
+/* The same fact for a key. A track says which part of the file the panel is
+   showing on its row; a focused key had nowhere to say it, so zooming a key
+   was the one place on this panel where you could lose your bearings. The
+   cell's TOP rule carries the view, the bottom one carries the region: two
+   facts, two edges, no new box and no new colour. */
+const padView = [];
+function paintKeyView(el, k, p) {
+  let key = '';
+  if (el && p.loaded && focusKind === 'key' && k === focusKey) {
+    const v = views.peek('key:' + (bankBase() + k), fileSig(p));
+    if (v && !View.isWhole(v, p.frames)) {
+      key = (v.vs / p.frames * 100).toFixed(3) + '%:' +
+            ((1 - v.ve / p.frames) * 100).toFixed(3) + '%';
+    }
+  }
+  if (!el || padView[k] === key) return;
+  padView[k] = key;
+  el.classList.toggle('zoomed', key !== '');
+  if (key) {
+    const [a, b] = key.split(':');
+    el.style.setProperty('--vs', a);
+    el.style.setProperty('--ve', b);
+  }
+}
+
 /* PANNING'S OWN HOME. The lit span says which part of the file the panel is
    showing; drag it and the panel scrolls. That is the real resolution of the
    gesture conflict rather than a reshuffle of modifiers: the waveform is for
@@ -544,8 +569,32 @@ function startMiniPan(e, i) {
   e.preventDefault();
   return true;
 }
+/* A key's strip is its own cell, and it is a handle only while EDIT is on and
+   that key is the one being edited — with EDIT off a press on a pad is a note,
+   and nothing may take that press away from it. */
+let keyPan = null;
+function startKeyPan(e, k) {
+  if (e.button !== 0 || !S || !editKeys || focusKind !== 'key' || focusKey !== k) return false;
+  const p = S.pads[k];
+  if (!p || !p.loaded) return false;
+  const v = views.peek('key:' + (bankBase() + k), fileSig(p));
+  if (!v || View.isWhole(v, p.frames)) return false;
+  keyPan = { k, v, x: e.clientX, name: p.name, frames: p.frames,
+             slot: bankBase() + k,
+             W: e.currentTarget.getBoundingClientRect().width };
+  e.preventDefault();
+  return true;
+}
+
 (function wireMinimap() {
   window.addEventListener('mousemove', (e) => {
+    if (keyPan && S) {
+      const df = (e.clientX - keyPan.x) / (keyPan.W || 1) * keyPan.frames;
+      setView({ kind: 'key', i: keyPan.k, slot: keyPan.slot, name: keyPan.name,
+                frames: keyPan.frames },
+              View.panFrames(keyPan.v, keyPan.frames, cssW(), df));
+      return;
+    }
     if (!miniPan || !S) return;
     const t = S.tracks[miniPan.i];
     if (!t || !t.loaded) return;
@@ -554,7 +603,7 @@ function startMiniPan(e, i) {
     setView({ kind: 'track', i: miniPan.i, name: miniPan.name, frames: miniPan.frames },
             View.panFrames(miniPan.v, miniPan.frames, cssW(), df));
   });
-  window.addEventListener('mouseup', () => { miniPan = null; });
+  window.addEventListener('mouseup', () => { miniPan = null; keyPan = null; });
 })();
 
 function beatFrames(t) {
@@ -983,6 +1032,7 @@ function buildPads(n) {
                    <span class="p-label">unassigned</span>`;
     b.addEventListener('mousedown', (e) => {
       if (assignArmed) return assignToKey(i);
+      if (startKeyPan(e, i)) return;      // the cell of the key being edited scrolls it
       if (editKeys) { focusKind = 'key'; focusKey = i; paintKeyFocus(); return; }
       triggerPad(i);
     });
@@ -1122,6 +1172,7 @@ function renderState() {
     setText(el.querySelector('.p-mode'), mapped ? p.mode : '—');
     const [pls, ple] = liveLoop(i, { kind: 'key', i, ls: p.ls, le: p.le });
     paintKeySpan(el, i, pls, ple, p.frames);
+    paintKeyView(el, i, p);
   });
   // the engine owns the pad mode; a reloaded panel adopts it rather than
   // stamping its own default over a running set
