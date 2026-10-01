@@ -76,5 +76,27 @@ if __name__ == "__main__":
     check("server 16-bit length path",
           encode_frame(OP_BIN, b"z" * 300)[:4] == b"\x82\x7e\x01\x2c")
 
+    # ── where the panel answers from ─────────────────────────────────────
+    import types
+    from loopengine.server import Server
+
+    fake = types.SimpleNamespace(token="tok3n")
+    here = Server(fake, host="127.0.0.1", port=0)
+    check("by default the panel answers this machine and nobody else",
+          here.url.startswith("http://127.0.0.1:") and here.url.endswith("?t=tok3n")
+          and here.lan_url == "", here.url)
+    here.httpd.server_close()
+
+    lan = Server(fake, host="0.0.0.0", port=0)
+    check("--lan still gives this machine a 127.0.0.1 link to open",
+          lan.url.startswith("http://127.0.0.1:"), lan.url)
+    other = lan.lan_url
+    check("and an address on the network, carrying the same token",
+          other.startswith("http://") and "127.0.0.1" not in other
+          and other.endswith("?t=tok3n"), other or "no network address here")
+    check("the token is in the link either way, so neither is open to the floor",
+          "t=tok3n" in lan.url and "t=tok3n" in (other or "t=tok3n"))
+    lan.httpd.server_close()
+
     print("\n%d checks failed" % len(FAILS) if FAILS else "\nall checks passed")
     sys.exit(1 if FAILS else 0)

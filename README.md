@@ -16,7 +16,48 @@ them in time with each other, and hit slices back on a 4×4 pad grid.
 
 ---
 
-## Install
+## Start here
+
+```bash
+./start
+```
+
+That is the whole thing. It fetches what it needs the first time, tells you the
+one line to type if PortAudio is missing — that part is C and needs your
+password — and opens the panel in your browser.
+
+Five minutes in:
+
+1. **Press RUN.** The demo kit is already loaded; the clock starts.
+2. **SHIFT and A** launches track 1. SHIFT with `ASDF` and `ZXCV` launches the
+   eight tracks; SHIFT with `1234` and `QWER` mutes them.
+3. **Press a key** — `1234 QWER ASDF ZXCV` — to fire the sixteen sounds. The
+   left hand never has to leave them.
+4. **Drag across the waveform** to choose the part of a file that loops. `9`
+   fits the loop to the panel, `0` fits the whole file.
+5. **Press `?`** for the help sheet. Everything on the panel names itself in
+   it, and nothing you can press is hidden behind a menu.
+
+Nothing leaves your machine. No account, no sign-up, no telemetry, no update
+check: the panel talks to `127.0.0.1` and to nothing else, and the type it
+draws with is served from `ui/fonts/`. Where your sets and takes are kept, and
+how to delete them, is under [What this stores](#what-this-stores-and-where).
+
+A phone or tablet can hold the panel instead, with the sound still coming out
+of this machine, where the sound card is:
+
+```bash
+./start --lan
+```
+
+It prints a second link for the network. Anyone on that network holding the
+whole link can drive your set, so share it the way you would share a key, and
+leave `--lan` off on a network you do not know.
+
+## Install, by hand
+
+`./start` does all of this for you. It is here because you may want to do it
+yourself, and because knowing what it does is the point of it being short.
 
 ```bash
 pip install -r requirements.txt
@@ -345,7 +386,7 @@ PYTHONPATH=.pylibs python3 -m tests     # with the vendored dependencies
 python3 -m tests                        # with installed ones
 ```
 
-495 checks in 17 files, about 62 seconds on the machine they were written on —
+506 checks in 17 files, about 63 seconds on the machine they were written on —
 more than half of that the browser file, which is the only one that starts a
 server and drives a real page.
 Each file runs in its own process and prints PASS, FAIL or SKIP for every check,

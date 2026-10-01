@@ -18,6 +18,7 @@ import secrets
 import struct
 import threading
 import urllib.parse
+import socket
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import numpy as np
@@ -318,7 +319,29 @@ class Server:
 
     @property
     def url(self):
-        return "http://%s:%d/?t=%s" % (self.host, self.port, self.app.token)
+        host = "127.0.0.1" if self.host in ("0.0.0.0", "::") else self.host
+        return "http://%s:%d/?t=%s" % (host, self.port, self.app.token)
+
+    @property
+    def lan_url(self):
+        """The same panel, at this machine's address on the network, or "".
+
+        For the second screen a laptop cannot give you: the sound stays here,
+        where the sound card is, and a phone on the same wifi holds the panel.
+        No packet is sent to find this out — the address is read off the socket
+        the kernel would use to reach the outside, with nothing on the far end.
+        """
+        if self.host not in ("0.0.0.0", "::"):
+            return ""
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("192.0.2.1", 9))        # reserved, documentation-only
+            ip = s.getsockname()[0]
+        except OSError:
+            return ""
+        finally:
+            s.close()
+        return "http://%s:%d/?t=%s" % (ip, self.port, self.app.token)
 
     def serve_forever(self):
         self.httpd.serve_forever()

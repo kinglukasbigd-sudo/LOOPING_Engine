@@ -33,6 +33,10 @@ def main(argv=None):
     ap.add_argument("--empty", action="store_true",
                     help="start with no audio loaded")
     ap.add_argument("--no-browser", action="store_true")
+    ap.add_argument("--lan", action="store_true",
+                    help="also answer on this machine's network address, so a "
+                         "phone or tablet on the same wifi can open the panel. "
+                         "Off by default: see the warning it prints.")
     ap.add_argument("--measure-output", action="store_true",
                     help="measure the output stage by loopback instead of "
                          "trusting the backend's block arithmetic; needs a "
@@ -101,7 +105,8 @@ def main(argv=None):
               inbox=os.path.join(HERE, ".inbox")).start_pump()
 
     try:
-        server = Server(app, port=args.port).start()
+        server = Server(app, host="0.0.0.0" if args.lan else "127.0.0.1",
+                        port=args.port).start()
     except OSError as e:
         engine.stop()
         print("Port %d is taken (%s). Try --port %d."
@@ -161,6 +166,14 @@ def main(argv=None):
     print("  output     %s" % lat["output_ms_source"])
     print("             queue is measured live; the panel shows CTRL and OUT")
     print("  panel      %s" % server.url)
+    if args.lan:
+        lan = server.lan_url
+        print("  phone      %s" % (lan or "no network address found"))
+        print("             --lan: anyone on this network who has that whole")
+        print("             address can drive this panel, load from the folders")
+        print("             it may read and write takes. The link is the key —")
+        print("             share it the way you would share a key, and drop")
+        print("             --lan on a network you do not know.")
     if kit and not args.empty:
         print("  loaded     %s" % kit)
     if args.offline:
