@@ -1,0 +1,63 @@
+#!/usr/bin/env sh
+# LOOP ENGINE — one command, from nothing to a panel.
+#
+# Everything this does by hand is in the README; what it adds is doing it in
+# the right order and saying something useful when a step cannot be done. The
+# python it needs is 3.9 or newer, and the one thing it cannot install for you
+# is PortAudio, because that is a system library and needs your password.
+set -eu
+
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+cd "$here"
+
+say() { printf '%s\n' "$*"; }
+
+PY=${PYTHON:-python3}
+if ! command -v "$PY" >/dev/null 2>&1; then
+  say "LOOP ENGINE needs python 3."
+  say "  Debian/Ubuntu:  sudo apt install python3"
+  say "  macOS:          brew install python"
+  exit 2
+fi
+
+"$PY" - <<'EOF' || exit 2
+import sys
+if sys.version_info < (3, 9):
+    sys.stderr.write("LOOP ENGINE needs python 3.9 or newer; this is %d.%d.\n"
+                     % sys.version_info[:2])
+    raise SystemExit(2)
+EOF
+
+# The three packages, kept beside the code rather than in the system python:
+# every current distribution refuses `pip install` into its own python, and a
+# virtualenv is one more thing to remember to activate. run.py already puts
+# this folder first on the path if it exists.
+if ! "$PY" -c "import sys, os; sys.path.insert(0, '.pylibs'); import numpy, sounddevice, soundfile" >/dev/null 2>&1; then
+  if "$PY" -c "import sys; sys.path.insert(0, '.pylibs'); import numpy" >/dev/null 2>&1; then
+    : # numpy is there; whatever is missing is reported properly below
+  fi
+  say "Fetching numpy, sounddevice and soundfile into .pylibs (about 80 MB, once)…"
+  if ! "$PY" -m pip install --quiet --target .pylibs -r requirements.txt; then
+    say ""
+    say "That did not work. The usual reasons:"
+    say "  no pip         Debian/Ubuntu: sudo apt install python3-pip"
+    say "  no network     the three packages come from pypi.org"
+    exit 2
+  fi
+fi
+
+# PortAudio is C, and pip does not ship it on Linux. Said here rather than in a
+# traceback thirty lines into starting up.
+if ! "$PY" -c "import sys; sys.path.insert(0, '.pylibs'); import sounddevice" >/dev/null 2>&1; then
+  say ""
+  say "PortAudio is missing — it is a system library, so this one needs you:"
+  say "  Debian/Ubuntu:  sudo apt install libportaudio2"
+  say "  Fedora:         sudo dnf install portaudio"
+  say "  Arch:           sudo pacman -S portaudio"
+  say "  macOS:          brew install portaudio"
+  say ""
+  say "Or see the panel without sound:  ./start --offline"
+  exit 2
+fi
+
+exec "$PY" run.py "$@"

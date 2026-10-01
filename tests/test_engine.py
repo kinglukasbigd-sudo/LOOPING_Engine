@@ -407,6 +407,32 @@ def t_probe_reaches_the_audio_thread():
           "got %s" % e.snapshot()["probe_id"])
 
 
+def t_the_output_can_be_opened_again_without_losing_the_set():
+    """A device that has stopped asking for sound is the one fault this had no
+    answer to: the panel could see it and offer nothing but killing the
+    program. Everything the engine holds lives outside the stream, so opening
+    another one costs nothing but the gap."""
+    e = Engine(samplerate=SR, blocksize=256, offline=True).start()
+    buf = np.zeros((SR, 2), dtype=np.float32)
+    e.post("track.load", i=0, buf=buf, sr=SR, name="a.wav", path="",
+           bpm=0.0, conf=0.0, slices=np.zeros(0, dtype=np.int64))
+    e.post("track.loop", i=0, ls=100, le=20000)
+    e.post("transport.bpm", v=131.0)
+    e.render_offline(256)
+    was = (e.tracks[0].name, e.tracks[0].loop_start, e.tracks[0].loop_end,
+           round(e.transport.bpm, 3), e.sr)
+
+    why = e.reopen()
+    check("a run with no sound card says why rather than pretending",
+          "offline" in why and why == e.last_error, why[:50])
+    check("and nothing it holds is disturbed by the attempt",
+          (e.tracks[0].name, e.tracks[0].loop_start, e.tracks[0].loop_end,
+           round(e.transport.bpm, 3), e.sr) == was)
+    e.render_offline(256)
+    check("and it is still running afterwards", e.stream is not None)
+    e.stop()
+
+
 if __name__ == "__main__":
     for fn in (t_seam_continuity, t_seam_crossfade_rescues_bad_loop,
                t_quantise_lands_on_the_bar, t_quantum_off_is_immediate,
@@ -416,7 +442,8 @@ if __name__ == "__main__":
                t_measured_output_overrides_the_reported_one,
                t_capture_is_preallocated_and_records,
                t_xruns_are_timestamped_not_just_counted,
-               t_probe_reaches_the_audio_thread):
+               t_probe_reaches_the_audio_thread,
+               t_the_output_can_be_opened_again_without_losing_the_set):
         try:
             fn()
         except Exception as exc:

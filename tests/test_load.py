@@ -160,8 +160,12 @@ def t_long_file_analysis_is_bounded():
     # that load cannot reach them", and a four-core machine busy with a Gradle
     # build reached them: 8344 ms for a 4000 ms bar, with nothing wrong. So it
     # asks what the machine is doing first, and declines to pretend otherwise.
+    # 1.5x the cores, not 1.0: the suite itself runs a browser alongside this,
+    # which is normal and fine. What this is declining to measure through is a
+    # machine with half a dozen other things on it — the run that started this
+    # was at 5x, and a tenth of that is still a quiet machine by comparison.
     load = _busy()
-    if load is not None and load > 0.6:
+    if load is not None and load > 1.5:
         skip("and neither is anywhere near the old cost",
              "this machine is at %.1fx its cores; a wall-clock bar means nothing here"
              % load)

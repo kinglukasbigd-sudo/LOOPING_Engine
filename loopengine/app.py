@@ -374,6 +374,21 @@ class App:
                     % (len(taken), "" if len(taken) == 1 else "s", ", ".join(taken)))
                 return
             self.map_pads(int(msg["track"]), msg.get("mode", "ONE"))
+        elif op == "audio.device":
+            # The way back from a device that has stopped, and the way to one
+            # plugged in since. Synchronous on purpose: the panel asked, the
+            # answer is one open() away, and its next frame should say what
+            # happened rather than guess.
+            if self.engine.offline:
+                self.engine.last_error = (
+                    "This run has no sound card: it was started with --offline.")
+                return
+            d = msg.get("device", None)
+            rec = self.engine.recorder
+            busy = rec is not None and rec.state in (REC_ARMED, REC_RECORDING)
+            why = self.engine.reopen(self.engine.KEEP if d is None else d, recording=busy)
+            if not why:
+                self.engine.last_error = ""
         elif op == "pads.bank":
             # Address only. The keys point somewhere else; nothing is touched.
             self.engine.post("pads.bank", b=int(msg.get("b", 0)))

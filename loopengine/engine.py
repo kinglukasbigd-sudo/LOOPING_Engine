@@ -322,6 +322,77 @@ class Engine:
             self.stream.close()
             self.stream = None
 
+    KEEP = "keep the device this is on"
+
+    def reopen(self, device=KEEP, recording=False):
+        """Open the output again, here or on another device. -> "" or the why.
+
+        Everything the engine holds is untouched: the tracks, the keys, their
+        regions, the clock and the queue all survive, because none of them live
+        in the stream. Only the hole the sound goes out of changes.
+
+        This is the way back from a device that has stopped asking for sound —
+        the panel can see that happen and had nothing to offer but restarting
+        the program — and the way to the interface that gets plugged in after
+        the panel is already open.
+
+        A rate change is refused while a take is recording: the WAV header was
+        written with the old rate, and finishing it at another one would make a
+        file that plays at the wrong speed for ever.
+        """
+        if self.offline or self.sd is None:
+            self.last_error = ("This run has no sound card: it was started "
+                               "with --offline.")
+            return self.last_error
+        want = self.device if device == self.KEEP else device
+        keep_t0 = self._t_start
+        try:
+            # so an interface plugged in since this started is visible at all
+            self.sd._terminate()
+            self.sd._initialize()
+        except Exception:
+            pass
+        try:
+            self.stop()
+        except Exception:
+            self.stream = None            # it was already gone; that is why we are here
+        rates = [self.sr]
+        try:
+            info = self.sd.query_devices(
+                want if want is not None else self.sd.default.device[1], "output")
+            native = int(info["default_samplerate"])
+            if native != self.sr:
+                rates.append(native)
+        except Exception as e:
+            info, native = None, None
+            if want is not None:
+                self.device = want
+                self.last_error = "No device answers to %r (%s)." % (want, e)
+                return self.last_error
+        for rate in rates:
+            if rate != self.sr and recording:
+                continue                  # a take cannot change rate halfway
+            try:
+                self.device = want
+                self.sr = int(rate)
+                self.transport.sr = int(rate)
+                self.start()
+                self._t_start = keep_t0 or self._t_start
+                self.device_name = (info or {}).get("name", self.device_name)
+                self.last_error = ""
+                return ""
+            except Exception as e:
+                failed = e
+                self.stream = None
+        self.sr = int(rates[0])
+        self.transport.sr = self.sr
+        why = "That device would not open: %s." % failed
+        if native and native != self.sr and recording:
+            why += (" It wants %d Hz and the take being recorded is %d Hz;"
+                    " stop the take first." % (native, self.sr))
+        self.last_error = why
+        return why
+
     def render_offline(self, frames: int) -> np.ndarray:
         """Pull `frames` frames straight through the callback. No device.
 

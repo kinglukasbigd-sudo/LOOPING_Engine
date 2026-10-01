@@ -82,6 +82,7 @@ const HELP = {
   cues:    ['HOT CUES',          'Eight marks in this track, on Y U I O and H J K ; — press an empty one to drop it where the playhead is, press a set one to jump there, SHIFT to clear it. Jumps wait for the quantum.'],
   jump:    ['BEAT JUMP',         'Slides the loop window without changing its length. 7 and 8 do the same by one beat.'],
   match:   ['TEMPO MATCH',       'MATCH plays the focused track at the speed that puts its own tempo on the clock — the turntable move, pitch and all. TAKE does the opposite and sets the clock from the track. M and SHIFT-M.'],
+  audio:   ['AUDIO OUT',         'Where the sound goes. DEVICE moves to the next output and opens it; RESTART opens this one again, which is the way back from a device that has stopped. Neither touches a track, a key or the clock.'],
   midi:    ['MIDI',              'CONNECT asks the browser for your controllers. Pads 36-51 — the bottom-left pad on most of them — play the sixteen keys of the bank showing. Start and stop run the clock; all-notes-off panics.'],
   session: ['SESSION',           'SAVE writes every track, key, region and zoom to a file. OPEN puts a set back.'],
   record:  ['RECORD',            'REC arms a take of the master output. RUN starts it, or it starts at once if the clock runs. REC again writes the file.'],
@@ -163,6 +164,7 @@ function connect() {
     connected = true;
     document.body.classList.remove('offline');
     sendProbe();
+    loadDevices();                 // what this machine can play out of, once
     // One-time path report, once the engine is actually there
     try {
       const r = await fetch(`/api/latency?t=${encodeURIComponent(TOKEN)}`);
@@ -293,6 +295,39 @@ function paintKeySpan(el, i, ls, le, frames) {
   spanCache[i] = k;
   el.style.setProperty('--rs', (a * 100).toFixed(3) + '%');
   el.style.setProperty('--re', ((1 - b) * 100).toFixed(3) + '%');
+}
+
+/* The output device, and the way back from one that has died.
+
+   A stalled device used to leave the panel saying so and offering nothing; the
+   only cure was killing the program, which on a stage is no cure at all. The
+   engine can open another stream without touching anything it holds — tracks,
+   keys, regions and the clock all live outside it — so this is two presses:
+   the next device, or this one again.
+
+   The list is fetched on connect and after every change, because the device
+   plugged in since the panel opened is exactly the one being looked for. */
+let devices = [];
+let devLine = '';
+function paintDevices() {
+  const line = $('#dev-line');
+  if (!line || !S) return;
+  const stalled = !!(S.audio && S.audio.stalled);
+  setText(line, stalled ? 'stopped — press RESTART' : (devLine || S.device || '—'));
+  line.classList.toggle('armed', stalled);
+}
+async function loadDevices() {
+  try {
+    const r = await fetch(`/api/devices?t=${encodeURIComponent(TOKEN)}`);
+    const d = await r.json();
+    devices = Array.isArray(d.devices) ? d.devices : [];
+  } catch (e) { devices = []; }
+}
+function openDevice(i) {
+  devLine = 'opening…';                                 // paint first
+  paintDevices();
+  send({ op: 'audio.device', device: i });
+  setTimeout(() => { devLine = ''; loadDevices(); }, 700);
 }
 
 /* MIDI. The browser hands the messages over; view.js says what each one means;
@@ -1187,6 +1222,7 @@ function renderState() {
   paintCues();
   paintTempoLine();
   paintMidi();
+  paintDevices();
 
   S.tracks.forEach((t, i) => {
     const el = $$('#strips .strip')[i];
@@ -1982,6 +2018,13 @@ const ACT = {
   jbeatf: () => { markQueued(focus, 'LOOP'); send({ op: 'track.loop.nudge', i: focus, v: 1 }); },
   jbarb: () => { markQueued(focus, 'LOOP'); send({ op: 'track.loop.nudge', i: focus, v: -4 }); },
   jbarf: () => { markQueued(focus, 'LOOP'); send({ op: 'track.loop.nudge', i: focus, v: 4 }); },
+  device: () => {
+    if (!S) return;
+    if (!devices.length) { localError = 'No output device to move to.'; return; }
+    const now = devices.findIndex(d => S.device && d.name && S.device.startsWith(d.name));
+    openDevice(devices[(now + 1) % devices.length].i);
+  },
+  reopen: () => { if (S) openDevice(null); },
   midi: () => {
     if (!navigator.requestMIDIAccess) {
       midiLine = 'this browser has no MIDI';

@@ -992,10 +992,37 @@ def t_a_midi_pad_is_the_same_gesture_as_the_cap(page):
     midi(0xB0, 7, 64)                        # a knob
     page.wait_for_timeout(120)
     check("a knob the panel has no use for reaches the engine as nothing",
-          not page.evaluate("window.__sent"))
+          not [x for x in page.evaluate("window.__sent")
+               if "probe" not in x["data"]],
+          str([x["data"] for x in page.evaluate("window.__sent")])[:70])
     paint(page)
     check("and the rail says MIDI is not connected, because nothing asked it to be",
           page.inner_text("#midi-line") == "not connected", page.inner_text("#midi-line"))
+
+
+def t_a_dead_output_has_a_way_back(page):
+    """A stalled device used to leave the panel saying so and offering nothing.
+
+    The test server runs on the null backend, so RESTART is refused with its
+    reason — which is the half that matters here: the press reaches the engine,
+    the panel says what came back, and nothing it holds is disturbed."""
+    closed(page)
+    check("the rail names where the sound is going",
+          page.inner_text("#dev-line").strip() != "", page.inner_text("#dev-line"))
+    before = page.evaluate("[S.tracks.map(t => t.name), S.bpm, S.pads[0].ls]")
+    page.evaluate("window.__sent = []")
+    page.click('[data-act="reopen"]')
+    page.wait_for_timeout(200)
+    sent = [x["data"] for x in page.evaluate("window.__sent") if "audio.device" in x["data"]]
+    check("RESTART asks the engine to open the output again",
+          sent == ['{"op":"audio.device","device":null}'], str(sent))
+    page.wait_for_function(
+        "() => S.error && S.error.indexOf('offline') >= 0", timeout=10000)
+    check("and a run with no sound card says exactly that, rather than nothing",
+          "offline" in page.evaluate("S.error"), page.evaluate("S.error")[:60])
+    page.wait_for_timeout(900)
+    check("the set is untouched by the attempt",
+          page.evaluate("[S.tracks.map(t => t.name), S.bpm, S.pads[0].ls]") == before)
 
 
 if __name__ == "__main__":
@@ -1025,6 +1052,7 @@ if __name__ == "__main__":
                        t_a_focused_key_says_what_it_is_showing,
                        t_tempo_match_both_ways,
                        t_a_midi_pad_is_the_same_gesture_as_the_cap,
+                       t_a_dead_output_has_a_way_back,
                        t_map_asks_and_mode_is_only_a_mode,
                        t_clearing_a_key,
                        t_feedback_lands_before_the_send,
