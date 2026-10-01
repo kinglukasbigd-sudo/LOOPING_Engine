@@ -611,3 +611,47 @@ kbd.w { letter-spacing: var(--tr-legend); text-indent: var(--optic-centre); }
 
 /* ── STATE ───────────────────────────────────────────────────────────── */
 body.offline #h-conn { text-decoration: line-through; }
+
+/* ── NARROW: the same panel, stacked ─────────────────────────────────────
+   The three columns are 232 + 288 of fixed rail and inspector, so below about
+   760px the grid cannot hold them side by side and the page starts scrolling
+   sideways — with the waveform, the one panel that wants pixels, squeezed to
+   nothing. On a tablet held in two hands, or a phone propped on the mixer with
+   --lan, the regions stack in reading order instead: the clock, then the
+   controls, the tracks, the waveform, the keys, the detail, the scope.
+
+   Nothing is removed and nothing changes meaning. A track strip is wider than
+   a phone, so that one region scrolls sideways inside itself, which is the
+   rule the whole panel follows — one region may scroll, the page never does. */
+@media (max-width: 760px) {
+  #app {
+    height: auto; min-height: 100vh;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto minmax(var(--wave-h), 52vh) auto auto auto;
+  }
+  #head   { grid-column: 1; grid-row: 1; grid-template-columns: minmax(0, 1fr); }
+  #rail   { grid-column: 1; grid-row: 2; }
+  #tracks { grid-column: 1; grid-row: 3; overflow-x: auto; }
+  #wave   { grid-column: 1; grid-row: 4; }
+  #pads   { grid-column: 1; grid-row: 5; }
+  #insp   { grid-column: 1; grid-row: 6; }
+  #scope  { grid-column: 1; grid-row: 7; }
+
+  /* the rail lies down and wraps, each block keeping its own hairline */
+  #rail { display: flex; flex-flow: row wrap; align-items: flex-start; width: auto; }
+  #rail > .rail-block { flex: 1 1 164px; border-right: var(--line); }
+  #rail > .rail-block.grow { flex: 1 1 100%; }
+  /* The master meter is a tall instrument on a tall screen; here it is a
+     strip. Through the flex basis, not height: the block is a column flex and
+     the meters carry flex: 1, whose basis of 0 wins the main axis outright. */
+  #rail > .rail-block.grow .master-meters { flex: 0 0 var(--meter-short); }
+
+  .head-pos { border-right: 0; }
+  /* Every reading stays reachable, in one line that scrolls, rather than a
+     stack of nine that pushes the panel itself off the first screen. */
+  .head-stats { flex-wrap: nowrap; overflow-x: auto; }
+  #strips { overflow-y: visible; }
+  .strip, .head-strip { min-width: 640px; }   /* it scrolls; it does not squash */
+  #insp { max-height: 60vh; }
+  #pads { height: var(--pads-h); }
+}

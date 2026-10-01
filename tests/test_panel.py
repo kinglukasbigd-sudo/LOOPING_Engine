@@ -1025,6 +1025,38 @@ def t_a_dead_output_has_a_way_back(page):
           page.evaluate("[S.tracks.map(t => t.name), S.bpm, S.pads[0].ls]") == before)
 
 
+def t_the_panel_stacks_on_a_narrow_screen(page):
+    """--lan puts this on a tablet or a phone, and three fixed columns do not
+    fit one. The regions stack instead; nothing is removed, and the page itself
+    never scrolls sideways — a track strip is wider than a phone, so that one
+    region scrolls inside itself."""
+    try:
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.wait_for_timeout(250)
+        paint(page)
+        w = page.evaluate("[document.body.scrollWidth, window.innerWidth]")
+        check("the page fits the screen rather than scrolling sideways",
+              w[0] <= w[1] + 1, "%d wide in %d" % (w[0], w[1]))
+        canvas = page.evaluate(
+            "Math.round(document.querySelector('#wcanvas').getBoundingClientRect().width)")
+        check("and the waveform gets the width, instead of collapsing to nothing",
+              canvas > 300, "%d px" % canvas)
+        rows = page.evaluate(
+            "() => { const r = document.querySelector('#strips');"
+            " return [r.scrollWidth > r.clientWidth, Math.round(r.clientWidth)]; }")
+        check("the track rows keep every control, scrolling in their own region",
+              rows[0] is True, str(rows))
+        check("every rail block is still there",
+              page.evaluate("document.querySelectorAll('#rail > .rail-block').length") == 8)
+    finally:
+        page.set_viewport_size({"width": 1600, "height": 1000})
+        page.wait_for_timeout(250)
+        paint(page)
+    check("and the three columns come back on a desktop",
+          page.evaluate(
+              "Math.round(document.querySelector('#rail').getBoundingClientRect().width)") == 232)
+
+
 if __name__ == "__main__":
     base = tempfile.mkdtemp(prefix="le-panel-ui-")
     server = Panel(base)
@@ -1053,6 +1085,7 @@ if __name__ == "__main__":
                        t_tempo_match_both_ways,
                        t_a_midi_pad_is_the_same_gesture_as_the_cap,
                        t_a_dead_output_has_a_way_back,
+                       t_the_panel_stacks_on_a_narrow_screen,
                        t_map_asks_and_mode_is_only_a_mode,
                        t_clearing_a_key,
                        t_feedback_lands_before_the_send,

@@ -195,6 +195,7 @@
   --row-h:   26px;    /* one track strip — 8 fit above 700px tall */
   --head-h:  48px;    /* the bar counter reads at the largest size, up here */
   --scope-h: 92px;
+  --meter-short: 124px;   /* the master ladder, on a screen held upright */
   --wave-h: 180px;
   --pads-h: 168px;
 

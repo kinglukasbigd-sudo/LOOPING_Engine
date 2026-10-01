@@ -54,6 +54,13 @@ It prints a second link for the network. Anyone on that network holding the
 whole link can drive your set, so share it the way you would share a key, and
 leave `--lan` off on a network you do not know.
 
+Below about 760px the three columns cannot sit side by side, so the regions
+stack in reading order instead — the clock, the controls, the tracks, the
+waveform, the keys. Nothing is removed and nothing changes meaning; a track row
+is wider than a phone, so that one region scrolls sideways inside itself while
+the page does not. A tablet is the comfortable size; a phone works, with the
+waveform about the width of your thumb's travel.
+
 ## The page about it
 
 `site/` is a single static page describing this, with the panel's own type and
@@ -393,7 +400,7 @@ PYTHONPATH=.pylibs python3 -m tests     # with the vendored dependencies
 python3 -m tests                        # with installed ones
 ```
 
-506 checks in 17 files, about 63 seconds on the machine they were written on —
+511 checks in 17 files, about 66 seconds on the machine they were written on —
 more than half of that the browser file, which is the only one that starts a
 server and drives a real page.
 Each file runs in its own process and prints PASS, FAIL or SKIP for every check,
