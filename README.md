@@ -68,10 +68,12 @@ gesture that matters most would not have existed at all.
 
 ## The page about it
 
-`site/` is a single static page describing this, with the panel's own type and
-the measured numbers on it. It needs no build step and nothing to run: open
-`site/index.html`, or point any static host at that folder — GitHub Pages reads
-it as it stands.
+It is live at **https://kinglukasbigd-sudo.github.io/LOOPING_Engine/**.
+
+`site/` is that single static page, with the panel's own type and the measured
+numbers on it. It needs no build step and nothing to run: open
+`site/index.html`, or point any static host at that folder.
+`.github/workflows/pages.yml` publishes the folder on every push to `main`.
 
 ## Install, by hand
 
