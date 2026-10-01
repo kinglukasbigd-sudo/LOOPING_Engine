@@ -61,6 +61,11 @@ is wider than a phone, so that one region scrolls sideways inside itself while
 the page does not. A tablet is the comfortable size; a phone works, with the
 waveform about the width of your thumb's travel.
 
+The gestures are pointer events, so a finger draws the same ones a mouse does —
+sweeping a loop, dragging a handle, scrolling by the lit span on a row. Mouse
+events are synthesised for a tap and never for a drag, so on a touch screen the
+gesture that matters most would not have existed at all.
+
 ## The page about it
 
 `site/` is a single static page describing this, with the panel's own type and
@@ -400,7 +405,7 @@ PYTHONPATH=.pylibs python3 -m tests     # with the vendored dependencies
 python3 -m tests                        # with installed ones
 ```
 
-511 checks in 17 files, about 66 seconds on the machine they were written on —
+512 checks in 17 files, about 66 seconds on the machine they were written on —
 more than half of that the browser file, which is the only one that starts a
 server and drives a real page.
 Each file runs in its own process and prints PASS, FAIL or SKIP for every check,

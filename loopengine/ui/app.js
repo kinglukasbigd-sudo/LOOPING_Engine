@@ -698,7 +698,7 @@ function startKeyPan(e, k) {
 }
 
 (function wireMinimap() {
-  window.addEventListener('mousemove', (e) => {
+  window.addEventListener('pointermove', (e) => {
     if (keyPan && S) {
       const df = (e.clientX - keyPan.x) / (keyPan.W || 1) * keyPan.frames;
       setView({ kind: 'key', i: keyPan.k, slot: keyPan.slot, name: keyPan.name,
@@ -714,7 +714,7 @@ function startKeyPan(e, k) {
     setView({ kind: 'track', i: miniPan.i, name: miniPan.name, frames: miniPan.frames },
             View.panFrames(miniPan.v, miniPan.frames, cssW(), df));
   });
-  window.addEventListener('mouseup', () => { miniPan = null; keyPan = null; });
+  window.addEventListener('pointerup', () => { miniPan = null; keyPan = null; });
 })();
 
 function beatFrames(t) {
@@ -1822,13 +1822,19 @@ function frame() {
   const cursorFor = (e, t) => (e.shiftKey ? 'grab'
     : (nearHandle(e, t, viewOf(t)) ? 'col-resize' : 'crosshair'));
 
-  cv.addEventListener('mousemove', (e) => {
+  /* Pointer events, not mouse ones. The same handler then serves a mouse, a
+     trackpad and a finger: --lan puts this panel on a tablet, where mouse
+     events are synthesised for a tap and never for a drag, so the one gesture
+     that matters most — sweeping a loop — did not exist there at all. The
+     canvas takes touch-action: none so the browser stops trying to scroll the
+     page with a drag that belongs to the waveform. */
+  cv.addEventListener('pointermove', (e) => {
     const t = subject();
-    if (drag || !t || !t.loaded) return;
+    if (drag || !t || !t.loaded || e.pointerType !== 'mouse') return;
     cv.style.cursor = cursorFor(e, t);
   });
 
-  cv.addEventListener('mousedown', (e) => {
+  cv.addEventListener('pointerdown', (e) => {
     if (e.button !== 0 && e.button !== 1) return;   // a right press is not a gesture here
     const t = subject();
     if (!t || !t.loaded) return;
@@ -1843,10 +1849,11 @@ function frame() {
     else if (edge === 'out') { drag = { edge: 'out', ls }; handleFocus = 'out'; }
     else drag = { edge: 'sweep', anchor: frameInView(e, t, v), x: e.clientX, moved: false };
     if (drag.edge === 'in' || drag.edge === 'out') grabbed = drag.edge;  // lit this frame
+    try { cv.setPointerCapture(e.pointerId); } catch (err) { /* mouse is fine without */ }
     e.preventDefault();
   });
 
-  window.addEventListener('mousemove', (e) => {
+  window.addEventListener('pointermove', (e) => {
     if (!drag || !S) return;
     const t = subject();
     if (!t || !t.loaded) return;
@@ -1893,7 +1900,7 @@ function frame() {
     setTimeout(() => { if (dragLoop === held) dragLoop = null; }, grace);
   };
 
-  window.addEventListener('mouseup', (e) => {
+  window.addEventListener('pointerup', (e) => {
     const done = drag;
     drag = null;
     grabbed = null;

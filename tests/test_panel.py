@@ -1048,6 +1048,36 @@ def t_the_panel_stacks_on_a_narrow_screen(page):
               rows[0] is True, str(rows))
         check("every rail block is still there",
               page.evaluate("document.querySelectorAll('#rail > .rail-block').length") == 8)
+
+        # A finger, not a mouse. Mouse events are synthesised for a tap and
+        # never for a drag, so before the handlers moved to pointer events the
+        # one gesture that matters most did not exist on a touch screen.
+        page.evaluate("focusKind = 'track'; focus = 0; renderState()")
+        whole_loop(page)
+        before = region(page)
+        page.evaluate("""() => {
+          const cv = document.querySelector('#wcanvas');
+          const b = cv.getBoundingClientRect();
+          const y = Math.round(b.top + b.height / 2);
+          const at = (x, type) => cv.dispatchEvent(new PointerEvent(type, {
+            pointerId: 7, pointerType: 'touch', isPrimary: true, bubbles: true,
+            cancelable: true, button: 0, buttons: type === 'pointerup' ? 0 : 1,
+            clientX: Math.round(b.left + x), clientY: y }));
+          at(40, 'pointerdown');
+          for (const x of [80, 140, 200, 260]) {
+            window.dispatchEvent(new PointerEvent('pointermove', {
+              pointerId: 7, pointerType: 'touch', isPrimary: true, bubbles: true,
+              button: 0, buttons: 1,
+              clientX: Math.round(b.left + x), clientY: y }));
+          }
+          window.dispatchEvent(new PointerEvent('pointerup', {
+            pointerId: 7, pointerType: 'touch', isPrimary: true, bubbles: true,
+            button: 0, buttons: 0, clientX: Math.round(b.left + 260), clientY: y }));
+        }""")
+        landed(page)
+        after = region(page)
+        check("a finger sweeps a loop the same way a mouse does",
+              after != before and after[1] > after[0], "%s -> %s" % (before, after))
     finally:
         page.set_viewport_size({"width": 1600, "height": 1000})
         page.wait_for_timeout(250)
