@@ -293,9 +293,14 @@ def whole_loop(page):
     """Loop the whole file first, so both handles sit at the panel's edges and
     a sweep started in the middle cannot land on one — handles win that press,
     which is the rule, and a check that trips over it is testing the wrong
-    thing. Double click is the panel's own gesture for it."""
-    page.dblclick("#wcanvas")
-    landed(page)
+    thing. Through the panel's own commit path, which is what the gestures use;
+    the double click that used to do this is gone, on purpose."""
+    page.evaluate("() => { const t = subject(); paintRegion(t.i, 0, t.frames);"
+                  " sendRegion(0, t.frames); }")
+    page.wait_for_function("() => { const t = subject();"
+                           " return t && t.ls === 0 && t.le === t.frames; }", timeout=10000)
+    page.evaluate("dragLoop = null")
+    paint(page)
 
 
 def view(page):

@@ -1701,8 +1701,7 @@ function frame() {
      deadline tracks the quantum: a fixed 4 s would expire mid-wait at 4BAR and
      snap the readout back to a value the engine is about to replace. It is
      still a deadline — a dropped socket must not leave the panel showing a
-     number nothing agrees with. Every gesture that commits a region ends here,
-     including the double click, which lands after its own mouseup. */
+     number nothing agrees with. Every gesture that commits a region ends here. */
   const settle = () => {
     if (!dragLoop) return;
     const held = dragLoop;
@@ -1750,12 +1749,11 @@ function frame() {
     }
   }, { passive: false });
 
-  cv.addEventListener('dblclick', () => {
-    const t = subject();
-    if (!t || !t.loaded) return;
-    commit(0, t.frames);
-    settle();
-  });
+  /* There is no double click here any more. It set the loop to the whole file,
+     which was useful when a sweep could not, and became the one gesture on this
+     panel that could wipe a hand-tuned region by accident — two presses in the
+     same place, which is what a hesitant hand does. `0` still fits the whole
+     file to the view, and a sweep still takes all of it. */
 })();
 
 /* Arrows nudge the focused handle. Fine is one pixel of the VIEW, so a press

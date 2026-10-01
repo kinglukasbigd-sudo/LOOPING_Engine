@@ -127,7 +127,10 @@ Panning is SHIFT: SHIFT-drag on the waveform, SHIFT-scroll, or the middle
 button. It also has a home of its own — while zoomed, the track's row lights the
 part of the file in view on its bottom rule, and dragging that row scrolls the
 panel. The waveform is for choosing, the strip is for navigating. Scroll zooms
-around the pointer, and double click loops the whole file.
+around the pointer. Double click does nothing: it used to set the loop to the
+whole file, and it was the one gesture here that could wipe a hand-tuned region
+by accident, since two presses in the same place is what a hesitant hand does.
+`0` fits the whole file, and a sweep still takes all of it.
 
 Zooming changes nothing you hear and sends nothing to the engine. The arrow keys
 nudge the aimed point by one pixel of what you are looking at, so they get finer
