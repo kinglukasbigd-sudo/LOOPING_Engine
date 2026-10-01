@@ -1,7 +1,7 @@
-# The page in site/ goes live on every push to main. The first run also turns
-# GitHub Pages on by itself (`enablement: true`), so nothing has to be clicked
-# in the repository settings. The folder is uploaded as the site root, which is
-# why the address has no /site/ in it.
+# The page in site/ goes live on every push to main. Pages has to be switched on
+# once by hand — Settings -> Pages -> Source: GitHub Actions — because the
+# token a workflow is given cannot turn it on for the repository. The folder is
+# uploaded as the site root, which is why the address has no /site/ in it.
 name: pages
 
 on:
@@ -30,8 +30,6 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: actions/configure-pages@v5
-        with:
-          enablement: true
 
       # site/ as it stands: one page and one screenshot, no build step.
       - uses: actions/upload-pages-artifact@v3
