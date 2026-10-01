@@ -80,6 +80,7 @@ once a device is there — you just can't hear it.
                                       9 / 0   fit loop / whole file
                                       - / =   zoom out / in
                                       [ / ]   previous / next track
+                 YUIO HJK;             hot cues 1–8, SHIFT clears
                                       L       load a file
                                       `       key bank A B C D
                                       ESC     panic, cut everything now
@@ -142,9 +143,10 @@ lights.
 keys next to the loop keys `5`–`8`. `F` and `L`, the obvious letters, were
 already a pad and the file browser.
 
-**Eight hot cues a track**, on the bar under the waveform. Press an empty one
-and it takes the playhead's place; press a set one and the track goes there;
-CTRL-press clears it. A jump waits for the quantum like any other launch. A cue
+**Eight hot cues a track**, on the bar under the waveform and on the eight keys
+under your right hand — `Y U I O` and `H J K ;`, with the cap printed on each
+button. Press an empty one and it takes the playhead's place; press a set one
+and the track goes there; SHIFT clears it. On the buttons, CTRL clears too. A jump waits for the quantum like any other launch. A cue
 inside the region moves the playhead; a cue outside it slides the whole window
 to start there and keeps its length, which is the same operation as a beat jump.
 Setting or clearing one moves no loop point, and the marks on the waveform are

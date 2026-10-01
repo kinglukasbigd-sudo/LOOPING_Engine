@@ -845,6 +845,22 @@ def t_a_cue_is_set_then_jumped_then_cleared(page):
     check("and CTRL-pressing it clears it, leaving the others alone",
           lit() == "false" and page.evaluate("S.tracks[0].cues.filter(c => c >= 0).length") == 0)
 
+    # the same three things from the keyboard, where a hand in the dark is
+    press(page, "u")                                  # cue 2 is U
+    page.wait_for_function("S.tracks[0].cues[1] >= 0", timeout=10000)
+    at = page.evaluate("S.tracks[0].cues[1]")
+    page.evaluate("window.__sent = []")
+    press(page, "u")
+    page.wait_for_timeout(150)
+    jumped = [x["data"] for x in page.evaluate("window.__sent") if "cue.jump" in x["data"]]
+    check("U sets a cue, and U again jumps to it",
+          at >= 0 and any('"c":1' in d for d in jumped), str(jumped)[:70])
+    press(page, "Shift+U")
+    page.wait_for_function("S.tracks[0].cues[1] < 0", timeout=10000)
+    paint(page)
+    check("and SHIFT-U clears it",
+          page.evaluate("S.tracks[0].cues.filter(c => c >= 0).length") == 0)
+
 
 if __name__ == "__main__":
     base = tempfile.mkdtemp(prefix="le-panel-ui-")

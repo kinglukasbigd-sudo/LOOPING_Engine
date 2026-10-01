@@ -28,6 +28,14 @@ html, body {
 [data-help] { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* A panel title sizes to its content, so swapping PADS for KEYS — one pixel
    narrower — shifted the buttons beside it. Reserved for both strings. */
+/* The key that presses a cue, on the cue itself: small, dim, and out of the
+   way of the number, so the row reads as 1-8 and answers "which key" without
+   being asked. */
+.c-cap {
+  margin-left: var(--s2); font-size: var(--t1);
+  opacity: var(--text-dim2); letter-spacing: 0;
+}
+
 /* 7ch, not 6: at this face 6ch is a pixel short of four capitals and every
    title drew as PA… — a width that fits the text it was measured for. */
 .panel-title[data-help] { width: 7ch; flex: none; }

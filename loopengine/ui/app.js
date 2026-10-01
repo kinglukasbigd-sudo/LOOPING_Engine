@@ -18,6 +18,13 @@ const PAD_CODES = ['Digit1', 'Digit2', 'Digit3', 'Digit4',
                    'KeyQ', 'KeyW', 'KeyE', 'KeyR',
                    'KeyA', 'KeyS', 'KeyD', 'KeyF',
                    'KeyZ', 'KeyX', 'KeyC', 'KeyV'];
+/* The eight cues, under the right hand while the left stays on the pads: the
+   top row Y U I O, and H J K ; on the row below it. All eight were unbound.
+   SHIFT clears one — not CTRL, which the keyboard never sees for O, J or K
+   because the browser takes those for itself before the page is asked. */
+const CUE_CODES = ['KeyY', 'KeyU', 'KeyI', 'KeyO',
+                   'KeyH', 'KeyJ', 'KeyK', 'Semicolon'];
+const CUE_CAPS = ['Y', 'U', 'I', 'O', 'H', 'J', 'K', ';'];
 const PAD_CAPS = ['1', '2', '3', '4', 'Q', 'W', 'E', 'R',
                   'A', 'S', 'D', 'F', 'Z', 'X', 'C', 'V'];
 const QUANTUM_LABELS = ['OFF', '1/16', '1/8', 'BEAT', '1/2', 'BAR', '2BAR', '4BAR'];
@@ -72,7 +79,7 @@ const HELP = {
   pads:    ['KEYS',              'Each key holds its own sound and loop, and keeps them when you change the track.'],
   bank:    ['KEY BANK',          'Four banks of the same sixteen keys. Switching changes what the keys point at, never what a key holds. ` cycles.'],
   pmode:   ['WHOSE MODE',        'What ONE / GATE / LOOP act on: the key being edited, or the mode a key takes when you assign it.'],
-  cues:    ['HOT CUES',          'Eight marks in this track. Press an empty one to drop it where the playhead is, press a set one to jump there, CTRL-press to clear it. Jumps wait for the quantum.'],
+  cues:    ['HOT CUES',          'Eight marks in this track, on Y U I O and H J K ; — press an empty one to drop it where the playhead is, press a set one to jump there, SHIFT to clear it. Jumps wait for the quantum.'],
   jump:    ['BEAT JUMP',         'Slides the loop window without changing its length. 7 and 8 do the same by one beat.'],
   session: ['SESSION',           'SAVE writes every track, key, region and zoom to a file. OPEN puts a set back.'],
   record:  ['RECORD',            'REC arms a take of the master output. RUN starts it, or it starts at once if the clock runs. REC again writes the file.'],
@@ -915,8 +922,8 @@ function buildCues() {
     const b = document.createElement('button');
     b.className = 'btn';
     b.dataset.cue = c;
-    b.textContent = c + 1;
-    b.setAttribute('aria-label', 'Hot cue ' + (c + 1));
+    b.innerHTML = `${c + 1}<span class="c-cap">${CUE_CAPS[c]}</span>`;
+    b.setAttribute('aria-label', 'Hot cue ' + (c + 1) + ', key ' + CUE_CAPS[c]);
     b.setAttribute('aria-pressed', false);
     host.appendChild(b);
   }
@@ -1896,7 +1903,7 @@ document.addEventListener('click', (e) => {
      other click calls it off. Presses inside the pad grid belong to the assign
      gesture itself and are left to it. */
   const cue = e.target.closest('#cuerow .btn');
-  if (cue) cuePress(+cue.dataset.cue, e.ctrlKey || e.metaKey);
+  if (cue) cuePress(+cue.dataset.cue, e.shiftKey || e.ctrlKey || e.metaKey);
   if (!b || b.dataset.act !== 'mappads') cancelMap();
   if (!e.target.closest('#padgrid') && (!b || b.dataset.act !== 'assign')) cancelAssign();
   if (b && ACT[b.dataset.act]) ACT[b.dataset.act]();
@@ -1943,6 +1950,12 @@ window.addEventListener('keydown', (e) => {
       markQueued(pi - 8, 'TOG');
       send({ op: 'track.toggle', i: pi - 8 });
     }
+    return;
+  }
+  const ci = CUE_CODES.indexOf(code);
+  if (ci >= 0) {
+    e.preventDefault();
+    cuePress(ci, e.shiftKey);
     return;
   }
   if (pi >= 0) {
