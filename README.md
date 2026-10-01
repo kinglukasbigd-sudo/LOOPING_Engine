@@ -167,6 +167,20 @@ for when the track is the reference the rest will follow. The rail says which
 track it would act on, its tempo and what speed it is playing at, and lights
 when that speed is no longer ×1.
 
+**A controller plays the keys.** CONNECT in the rail asks the browser for your
+MIDI inputs — a press, never on load, because a panel that opens a permission
+prompt by itself is a panel that changed state with nobody touching it. Notes
+36 to 51, the sixteen pads every drum machine since the MPC has put there, play
+the sixteen keys of the bank showing: the bottom-left pad is key 1. A note on
+with no velocity counts as a note off, which is how half of them do it. MIDI
+start and stop run and stop the clock, and all-notes-off panics. Every channel
+is heard.
+
+What a message means is arithmetic in `view.js` and is checked without a
+controller plugged in; what the panel does with it is the same function a key
+press calls, so a pad and a cap are one gesture by the time they reach the
+socket.
+
 ## Looping a vocal out of a stereo mix
 
 Each track has three sources: `STEREO`, `CTR` and `SIDE`.

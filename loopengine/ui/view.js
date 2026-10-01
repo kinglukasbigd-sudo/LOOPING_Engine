@@ -298,12 +298,37 @@
     return two(Math.floor(s / 3600)) + ':' + two(Math.floor(s / 60) % 60) + ':' + two(s % 60);
   }
 
+  /* MIDI, as arithmetic. The panel owns the socket and the DOM; this owns what
+     a message MEANS, which is the part worth testing without a controller
+     plugged in.
+
+     Notes 36 to 51 are the sixteen pads every drum machine since the MPC has
+     put there, so a controller's bottom-left pad is key 1. They address the
+     bank showing, exactly as the key caps do — the engine resolves that, and a
+     switch mid-note still releases the slot it started.
+
+     Note on with velocity 0 is note off; every controller that does it that way
+     relies on this, and a panel that missed it would hang a note. Channels are
+     not read: a stage is no place to discover you are on channel 2. */
+  const MIDI_LOW = 36;
+  function midiAction(bytes) {
+    if (!bytes || bytes.length < 1) return null;
+    const st = bytes[0] & 0xF0, sys = bytes[0];
+    if (sys === 0xFA || sys === 0xFB) return { kind: 'transport', on: true };
+    if (sys === 0xFC) return { kind: 'transport', on: false };
+    if (st === 0xB0 && (bytes[1] === 120 || bytes[1] === 123)) return { kind: 'panic' };
+    if (st !== 0x90 && st !== 0x80) return null;
+    const i = bytes[1] - MIDI_LOW;
+    if (!(i >= 0 && i < 16)) return null;
+    return { kind: 'key', i, on: st === 0x90 && bytes[2] > 0 };
+  }
+
   const View = {
     PX_PER_SAMPLE_MAX, MIN_LOOP, minSpan, whole, isWhole, clamp, zoomAt, pan,
     panFrames, sweep, fitLoop,
     xToFrame, frameToX, nudgeStep, envelopeSource, samplesSource,
     overviewSource, bucketSize, bucketOf, columns, sampleLine, store, coalescer,
-    clock,
+    clock, midiAction, MIDI_LOW,
   };
   if (typeof module === 'object' && module.exports) module.exports = View;
   else root.View = View;

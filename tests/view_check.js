@@ -333,4 +333,28 @@ const MIN4 = 48000 * 240;           // the brief's four-minute file: 11,520,000 
         V.clock(NaN) === '00:00:00' && V.clock(undefined) === '00:00:00' && V.clock(-5) === '00:00:00');
 }
 
+// ── what a MIDI message means ────────────────────────────────────────────
+{
+  const A = V.midiAction;
+  check('the sixteen pads every drum machine has are the sixteen keys',
+        A([0x90, 36, 100]).kind === 'key' && A([0x90, 36, 100]).i === 0
+        && A([0x90, 51, 100]).i === 15, JSON.stringify(A([0x90, 36, 100])));
+  check('a note off lets the key go', A([0x80, 40, 0]).on === false
+        && A([0x80, 40, 0]).i === 4);
+  check('and so does a note on with no velocity, which is how half of them do it',
+        A([0x90, 40, 0]).on === false && A([0x90, 40, 0]).i === 4);
+  check('every channel is heard, because a stage is no place to find out otherwise',
+        A([0x95, 36, 1]).i === 0 && A([0x8F, 36, 0]).i === 0);
+  check('notes outside the sixteen are not keys', A([0x90, 35, 100]) === null
+        && A([0x90, 52, 100]) === null);
+  check('start and continue run the clock, stop stops it',
+        A([0xFA]).kind === 'transport' && A([0xFA]).on === true
+        && A([0xFB]).on === true && A([0xFC]).on === false);
+  check('all notes off is a panic, from whichever control sends it',
+        A([0xB0, 123, 0]).kind === 'panic' && A([0xB3, 120, 0]).kind === 'panic');
+  check('a knob, a bend or nonsense means nothing rather than something',
+        A([0xB0, 7, 64]) === null && A([0xE0, 0, 64]) === null
+        && A([]) === null && A(null) === null);
+}
+
 process.exitCode = fails ? 1 : 0;

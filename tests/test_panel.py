@@ -950,6 +950,54 @@ def t_tempo_match_both_ways(page):
     page.evaluate("focusKind = 'track'; send({op: 'track.speed', i: 0, v: 1}); renderState()")
 
 
+def t_a_midi_pad_is_the_same_gesture_as_the_cap(page):
+    """No controller is plugged into a test machine, so the messages are handed
+    to the panel's own handler — which is the whole point of the split: what a
+    message means is arithmetic in view.js, and what the panel does with it is
+    the same function a key press calls."""
+    closed(page)
+    midi = lambda *b: page.evaluate("b => onMidi({ data: b })", list(b))
+    page.evaluate("window.__sent = []")
+    midi(0x90, 36, 100)                      # bottom-left pad, key 1
+    page.wait_for_timeout(120)
+    sent = [x for x in page.evaluate("window.__sent") if "pad.trigger" in x["data"]]
+    check("a pad plays the key its note stands for, lighting the cell first",
+          len(sent) == 1 and '"i":0' in sent[0]["data"] and "hit" in sent[0]["pad0"],
+          str(sent[:1])[:90])
+    page.evaluate("window.__sent = []")
+    midi(0x90, 36, 0)                        # note on, no velocity: a release
+    page.wait_for_timeout(120)
+    rel = [x["data"] for x in page.evaluate("window.__sent") if "pad.release" in x["data"]]
+    check("and letting it go releases that key, once",
+          rel == ['{"op":"pad.release","i":0}'], str(rel))
+
+    page.evaluate("window.__sent = []")
+    midi(0x80, 36, 0)                        # a release for a note not held
+    page.wait_for_timeout(120)
+    check("a release with nothing held sends nothing at all",
+          not [x for x in page.evaluate("window.__sent") if "pad." in x["data"]])
+
+    page.evaluate("window.__sent = []")
+    midi(0xFA)
+    page.wait_for_timeout(120)
+    run = [x for x in page.evaluate("window.__sent") if "transport" in x["data"]]
+    check("MIDI start runs the clock, and RUN lights before the send",
+          len(run) == 1 and "transport.start" in run[0]["data"] and run[0]["run"] == "true",
+          str(run[:1])[:80])
+    midi(0xFC)
+    page.wait_for_function("S.playing === false", timeout=10000)
+    check("and MIDI stop stops it", page.evaluate("S.playing") is False)
+
+    page.evaluate("window.__sent = []")
+    midi(0xB0, 7, 64)                        # a knob
+    page.wait_for_timeout(120)
+    check("a knob the panel has no use for reaches the engine as nothing",
+          not page.evaluate("window.__sent"))
+    paint(page)
+    check("and the rail says MIDI is not connected, because nothing asked it to be",
+          page.inner_text("#midi-line") == "not connected", page.inner_text("#midi-line"))
+
+
 if __name__ == "__main__":
     base = tempfile.mkdtemp(prefix="le-panel-ui-")
     server = Panel(base)
@@ -976,6 +1024,7 @@ if __name__ == "__main__":
                        t_a_cue_is_set_then_jumped_then_cleared,
                        t_a_focused_key_says_what_it_is_showing,
                        t_tempo_match_both_ways,
+                       t_a_midi_pad_is_the_same_gesture_as_the_cap,
                        t_map_asks_and_mode_is_only_a_mode,
                        t_clearing_a_key,
                        t_feedback_lands_before_the_send,

@@ -82,6 +82,7 @@ const HELP = {
   cues:    ['HOT CUES',          'Eight marks in this track, on Y U I O and H J K ; — press an empty one to drop it where the playhead is, press a set one to jump there, SHIFT to clear it. Jumps wait for the quantum.'],
   jump:    ['BEAT JUMP',         'Slides the loop window without changing its length. 7 and 8 do the same by one beat.'],
   match:   ['TEMPO MATCH',       'MATCH plays the focused track at the speed that puts its own tempo on the clock — the turntable move, pitch and all. TAKE does the opposite and sets the clock from the track. M and SHIFT-M.'],
+  midi:    ['MIDI',              'CONNECT asks the browser for your controllers. Pads 36-51 — the bottom-left pad on most of them — play the sixteen keys of the bank showing. Start and stop run the clock; all-notes-off panics.'],
   session: ['SESSION',           'SAVE writes every track, key, region and zoom to a file. OPEN puts a set back.'],
   record:  ['RECORD',            'REC arms a take of the master output. RUN starts it, or it starts at once if the clock runs. REC again writes the file.'],
 };
@@ -292,6 +293,50 @@ function paintKeySpan(el, i, ls, le, frames) {
   spanCache[i] = k;
   el.style.setProperty('--rs', (a * 100).toFixed(3) + '%');
   el.style.setProperty('--re', ((1 - b) * 100).toFixed(3) + '%');
+}
+
+/* MIDI. The browser hands the messages over; view.js says what each one means;
+   this does the same thing the matching key press does, through the same
+   functions, so a pad and a cap are the same gesture by the time they reach the
+   socket. Nothing here is engine-side: a controller is an input, and inputs
+   belong to the panel.
+
+   It is not asked for on load. Access needs a press to ask for it, and a panel
+   that opens a permission prompt by itself is a panel that changed state with
+   nobody touching it. */
+let midiLine = 'not connected';
+let midiOn = new Set();                  // notes held, so a drop cannot hang one
+function paintMidi() {
+  setText($('#midi-line'), midiLine);
+  const b = $('#midi-btn');
+  if (b) b.setAttribute('aria-pressed', midiLine.startsWith('listening'));
+}
+function onMidi(e) {
+  const a = View.midiAction(e.data);
+  if (!a) return;
+  if (a.kind === 'transport') {
+    const v = !!a.on;
+    $('[data-act="run"]').setAttribute('aria-pressed', v);     // paint first
+    predict('transport', v);
+    if (!v) predict('pending', 0);
+    send({ op: v ? 'transport.start' : 'transport.stop' });
+    return;
+  }
+  if (a.kind === 'panic') {
+    midiOn.clear();
+    predict('padsOn', false);
+    send({ op: 'panic' });
+    return;
+  }
+  if (a.on) { midiOn.add(a.i); triggerPad(a.i); }
+  else if (midiOn.delete(a.i)) releasePad(a.i);
+}
+function midiPorts(access) {
+  const names = [];
+  access.inputs.forEach((p) => { names.push(p.name || 'input'); p.onmidimessage = onMidi; });
+  midiLine = names.length ? 'listening · ' + names.join(', ').slice(0, 40)
+                          : 'connected, nothing plugged in';
+  paintMidi();
 }
 
 /* Tempo match, both directions, in one line of arithmetic each.
@@ -1141,6 +1186,7 @@ function renderState() {
   buildCues();
   paintCues();
   paintTempoLine();
+  paintMidi();
 
   S.tracks.forEach((t, i) => {
     const el = $$('#strips .strip')[i];
@@ -1936,6 +1982,22 @@ const ACT = {
   jbeatf: () => { markQueued(focus, 'LOOP'); send({ op: 'track.loop.nudge', i: focus, v: 1 }); },
   jbarb: () => { markQueued(focus, 'LOOP'); send({ op: 'track.loop.nudge', i: focus, v: -4 }); },
   jbarf: () => { markQueued(focus, 'LOOP'); send({ op: 'track.loop.nudge', i: focus, v: 4 }); },
+  midi: () => {
+    if (!navigator.requestMIDIAccess) {
+      midiLine = 'this browser has no MIDI';
+      paintMidi();
+      return;
+    }
+    midiLine = 'asking…';                                      // paint first
+    paintMidi();
+    navigator.requestMIDIAccess().then((access) => {
+      access.onstatechange = () => midiPorts(access);
+      midiPorts(access);
+    }).catch((err) => {
+      midiLine = 'refused — ' + String(err && err.name || err).slice(0, 24);
+      paintMidi();
+    });
+  },
   match: () => {
     const m = matchable();
     if (!m.t) { localError = `Nothing to match — ${m.why}.`; return; }
