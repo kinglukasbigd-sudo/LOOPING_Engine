@@ -54,6 +54,13 @@ It prints a second link for the network. Anyone on that network holding the
 whole link can drive your set, so share it the way you would share a key, and
 leave `--lan` off on a network you do not know.
 
+## The page about it
+
+`site/` is a single static page describing this, with the panel's own type and
+the measured numbers on it. It needs no build step and nothing to run: open
+`site/index.html`, or point any static host at that folder — GitHub Pages reads
+it as it stands.
+
 ## Install, by hand
 
 `./start` does all of this for you. It is here because you may want to do it

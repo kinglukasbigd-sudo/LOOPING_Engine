@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A multi-track loop mangler for one hand in the dark. Runs on your machine; nothing leaves it.">
+<title>LOOP ENGINE</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  /* The panel's own silkscreen, as a page. One ground, one ink, one accent with
+     three jobs, and a single continuous 1px rule grid: regions are bounded by
+     shared hairlines, never by boxes with gaps between them. No shadow, no
+     radius, nothing floating. Deliberately one theme — the instrument is dark. */
+  :root {
+    color-scheme: dark;
+    --bg:     #0B0B0C;
+    --n1:     #141517;
+    --n2:     #2A2C30;
+    --fg:     #D8D5CC;
+    --accent: #FF4A0F;
+    --text-1: rgba(216, 213, 204, 0.80);
+    --text-2: rgba(216, 213, 204, 0.62);
+
+    --display: "Saira Condensed", "Archivo Narrow", "Liberation Sans Narrow", sans-serif;
+    --mono: "IBM Plex Mono", "DejaVu Sans Mono", Menlo, Consolas, monospace;
+    --hair: 1px;
+    --rule: var(--hair) solid var(--n2);
+    --legend: 0.14em;
+  }
+
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1180px; margin: 0 auto; border-inline: var(--rule); }
+
+  /* ── the header rail, the way the panel's own reads ─────────────── */
+  .rail {
+    display: flex; flex-wrap: wrap; align-items: baseline;
+    gap: 0 28px; padding: 10px 16px; border-bottom: var(--rule);
+    background: var(--n1);
+  }
+  .stat { display: flex; align-items: baseline; gap: 7px; white-space: nowrap; }
+  .stat i {
+    font-style: normal; font-family: var(--display); font-size: 10px;
+    letter-spacing: var(--legend); text-transform: uppercase; color: var(--text-2);
+  }
+  .stat b { font-weight: 500; font-variant-numeric: tabular-nums; }
+  .stat.live b { color: var(--accent); }        /* ACCENT 1 — what is live */
+
+  /* ── hero ────────────────────────────────────────────────────────── */
+  .hero { padding: 48px 16px 40px; border-bottom: var(--rule); }
+  h1 {
+    font-family: var(--display); font-weight: 700;
+    font-size: clamp(52px, 11vw, 112px); line-height: 0.92;
+    letter-spacing: 0.01em; margin: 0 0 18px; text-wrap: balance;
+  }
+  .lede {
+    font-size: clamp(15px, 2.2vw, 19px); line-height: 1.5;
+    max-width: 30em; color: var(--text-1); margin: 0 0 8px;
+  }
+  .sub { max-width: 34em; color: var(--text-2); margin: 0 0 28px; }
+
+  .cmd {
+    display: inline-flex; align-items: center; gap: 12px;
+    border: var(--rule); padding: 9px 14px; background: var(--n1);
+  }
+  .cmd .p { color: var(--accent); }
+  .cmd code { font-family: var(--mono); font-size: 14px; }
+  .cmd button {
+    font: inherit; font-size: 10px; font-family: var(--display);
+    letter-spacing: var(--legend); text-transform: uppercase;
+    background: transparent; color: var(--text-2);
+    border: var(--rule); padding: 3px 8px; cursor: pointer;
+  }
+  .cmd button:hover, .cmd button:focus-visible { color: var(--fg); border-color: var(--fg); }
+
+  /* ── the pad grid, the thing the left hand lives on ──────────────── */
+  .caps {
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+    border-top: var(--rule); border-left: var(--rule);
+    max-width: 420px; margin: 34px 0 0;
+  }
+  .cap {
+    border-right: var(--rule); border-bottom: var(--rule);
+    aspect-ratio: 1.6 / 1; display: flex; align-items: center; justify-content: center;
+    font-family: var(--display); font-weight: 600; font-size: 17px;
+    color: var(--text-1); background: var(--bg);
+    transition: background 120ms cubic-bezier(.22,.61,.36,1), color 120ms cubic-bezier(.22,.61,.36,1);
+  }
+  .cap:hover { background: var(--fg); color: var(--bg); }
+  .caps-note { color: var(--text-2); margin: 10px 0 0; max-width: 34em; }
+
+  /* ── the shot ────────────────────────────────────────────────────── */
+  figure { margin: 0; border-bottom: var(--rule); }
+  figure img { display: block; width: 100%; height: auto; }
+  figcaption {
+    padding: 8px 16px; border-top: var(--rule);
+    font-size: 11px; color: var(--text-2);
+  }
+
+  /* ── cells: regions sharing hairlines, never cards ───────────────── */
+  .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cell { padding: 24px 16px 28px; border-bottom: var(--rule); }
+  .grid .cell + .cell { border-left: var(--rule); }
+  .grid .cell:nth-child(2n + 1) { border-left: 0; }
+  .legend {
+    font-family: var(--display); font-size: 10px; letter-spacing: var(--legend);
+    text-transform: uppercase; color: var(--text-2); margin: 0 0 12px;
+  }
+  h2 {
+    font-family: var(--display); font-weight: 600; font-size: 24px;
+    margin: 0 0 10px; letter-spacing: 0.01em; text-wrap: balance;
+  }
+  .cell p { margin: 0 0 10px; color: var(--text-1); max-width: 38em; }
+  .cell p:last-child { margin-bottom: 0; }
+  kbd {
+    font-family: var(--mono); font-size: 11px; border: var(--rule);
+    padding: 1px 5px; color: var(--fg); background: var(--n1);
+  }
+
+  /* ── the numbers ─────────────────────────────────────────────────── */
+  .nums { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  .nums th, .nums td { text-align: left; padding: 7px 10px; border-bottom: var(--rule); }
+  .nums th {
+    font-family: var(--display); font-weight: 400; font-size: 10px;
+    letter-spacing: var(--legend); text-transform: uppercase; color: var(--text-2);
+  }
+  .nums td:last-child, .nums th:last-child { text-align: right; }
+  .nums tr:last-child td { border-bottom: 0; }
+  .nums .k { color: var(--text-1); }
+  .nums .v { color: var(--fg); font-weight: 500; }
+  .nums .v em { font-style: normal; color: var(--accent); }   /* ACCENT 2 — the figure that matters */
+  .scroller { overflow-x: auto; }
+
+  .steps { margin: 0; padding: 0; list-style: none; counter-reset: s; }
+  .steps li {
+    display: grid; grid-template-columns: 2.2em 1fr; gap: 10px;
+    padding: 9px 0; border-bottom: var(--rule); color: var(--text-1);
+  }
+  .steps li:last-child { border-bottom: 0; }
+  .steps li::before {
+    counter-increment: s; content: counter(s, decimal-leading-zero);
+    font-family: var(--display); color: var(--text-2);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .foot { padding: 22px 16px 40px; color: var(--text-2); }
+  .foot a, .cell a { color: var(--fg); text-decoration: none; border-bottom: 1px solid var(--n2); }
+  .foot a:hover, .cell a:hover { border-bottom-color: var(--accent); }
+  .foot p { margin: 0 0 8px; max-width: 46em; }
+
+  @media (max-width: 760px) {
+    .grid { grid-template-columns: minmax(0, 1fr); }
+    .grid .cell + .cell { border-left: 0; }
+    .rail { gap: 0 18px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .cap { transition: none; }
+  }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <div class="rail">
+    <span class="stat"><i>Tracks</i><b>8</b></span>
+    <span class="stat"><i>Keys</i><b>64</b></span>
+    <span class="stat"><i>Voices</i><b>16</b></span>
+    <span class="stat live"><i>Path p95</i><b>21.13 ms</b></span>
+    <span class="stat"><i>Xrun</i><b>0</b></span>
+    <span class="stat"><i>Checks</i><b>506</b></span>
+    <span class="stat"><i>Runs on</i><b>your machine</b></span>
+  </div>
+
+  <section class="hero">
+    <h1>LOOP ENGINE</h1>
+    <p class="lede">A multi-track loop mangler for one hand in the dark.</p>
+    <p class="sub">
+      Load stems or whole tracks, sweep across a waveform to choose what loops,
+      launch them in time with each other, and hit the pieces back on sixteen
+      keys. Nothing is hidden behind a menu, nothing moves unless you move it.
+    </p>
+
+    <div class="cmd">
+      <span class="p">$</span>
+      <code id="cmd">./start</code>
+      <button type="button" id="copy" aria-label="Copy the command">Copy</button>
+    </div>
+
+    <div class="caps" aria-hidden="true">
+      <div class="cap">1</div><div class="cap">2</div><div class="cap">3</div><div class="cap">4</div>
+      <div class="cap">Q</div><div class="cap">W</div><div class="cap">E</div><div class="cap">R</div>
+      <div class="cap">A</div><div class="cap">S</div><div class="cap">D</div><div class="cap">F</div>
+      <div class="cap">Z</div><div class="cap">X</div><div class="cap">C</div><div class="cap">V</div>
+    </div>
+    <p class="caps-note">
+      Sixteen keys under the left hand, four banks of them, and the same sixteen
+      pads on a MIDI controller if you have one. Hold <kbd>SHIFT</kbd> and the
+      grid becomes the eight tracks.
+    </p>
+  </section>
+
+  <figure>
+    <img src="panel.png" width="3200" height="2000"
+         alt="The LOOP ENGINE panel: eight track rows with waveforms, a large
+              waveform editor with an orange loop region, sixteen key cells, and
+              a left rail holding transport, tempo, audio output, MIDI, session,
+              record and master level.">
+    <figcaption>The panel, running. One accent, three jobs: where the clock is, what is queued, what is chosen.</figcaption>
+  </figure>
+
+  <div class="grid">
+
+    <section class="cell">
+      <p class="legend">Choosing</p>
+      <h2>Sweep the waveform</h2>
+      <p>
+        Press, drag, release — those two samples are the loop. Backwards gives
+        the same region as forwards, and a press that does not travel changes
+        nothing, so a stray click cannot wipe a region you tuned by hand.
+      </p>
+      <p>
+        <kbd>SHIFT</kbd>-drag moves the view, the scroll wheel zooms around the
+        pointer, and the arrow keys nudge the aimed edge by one pixel of what
+        you are looking at — one sample, at full zoom.
+      </p>
+    </section>
+
+    <section class="cell">
+      <p class="legend">Playing</p>
+      <h2>Launches land on the bar</h2>
+      <p>
+        Starts, stops, reverses and pad hits wait for the quantum and land
+        sample-accurate: the audio block is split at the boundary rather than
+        rounded to it. The row tells you what it is waiting to do.
+      </p>
+      <p>
+        Eight hot cues a track on <kbd>Y</kbd> <kbd>U</kbd> <kbd>I</kbd>
+        <kbd>O</kbd> <kbd>H</kbd> <kbd>J</kbd> <kbd>K</kbd> <kbd>;</kbd>, beat
+        jump by a beat or a bar, and tempo match in both directions.
+      </p>
+    </section>
+
+    <section class="cell">
+      <p class="legend">Keeping</p>
+      <h2>A key holds its own sound</h2>
+      <p>
+        Assign a track's region to a key and the key takes a copy of the audio,
+        not a pointer to the track. Load something else on that track and the
+        key plays on, unchanged. Four banks, sixty-four slots.
+      </p>
+      <p>
+        Sessions write every track, key, region and zoom to a readable JSON
+        file, and takes of the master output are plain WAVs on your disk.
+      </p>
+    </section>
+
+    <section class="cell">
+      <p class="legend">Not doing</p>
+      <h2>Nothing leaves the machine</h2>
+      <p>
+        No account, no sign-up, no telemetry, no analytics, no crash reporting,
+        no update check. The panel talks to <code>127.0.0.1</code> and to
+        nothing else, and the type it draws with is served from its own folder
+        rather than a font CDN.
+      </p>
+      <p>
+        Your sets and takes are plain files under <code>~/.loopengine/</code>.
+        Deleting that folder deletes all of it.
+      </p>
+    </section>
+
+    <section class="cell">
+      <p class="legend">Measured, not claimed</p>
+      <h2>The numbers</h2>
+      <div class="scroller">
+        <table class="nums">
+          <thead>
+            <tr><th scope="col">On a real device, 48 kHz, 256 frames</th><th scope="col">Figure</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="k">Press to speaker, at the mean queue wait</td><td class="v">18.78 ms</td></tr>
+            <tr><td class="k">Press to speaker, at the p95 queue wait</td><td class="v"><em>21.13 ms</em></td></tr>
+            <tr><td class="k">Dropouts over 400 presses in 30 s</td><td class="v">0</td></tr>
+            <tr><td class="k">Callback CPU at that block size</td><td class="v">15.4 %</td></tr>
+            <tr><td class="k">Loop seam against the material's own steps</td><td class="v">3.37×</td></tr>
+            <tr><td class="k">The same seam with the crossfade off</td><td class="v">15.83×</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="margin-top:12px">
+        Taken from the signal the device actually consumed, teed to disk and
+        analysed — not from the backend's own arithmetic. The panel shows the
+        p95 figure and says p95 on the label.
+      </p>
+    </section>
+
+    <section class="cell">
+      <p class="legend">Getting it</p>
+      <h2>Three lines</h2>
+      <ol class="steps">
+        <li>Clone it from GitHub.</li>
+        <li>Run <kbd>./start</kbd> — it fetches what it needs and opens the panel.</li>
+        <li>Press <kbd>RUN</kbd>. The demo kit is already loaded, and it was
+            generated by the code rather than sampled from anybody.</li>
+      </ol>
+      <p style="margin-top:14px">
+        Linux or macOS, Python 3.9 or newer. PortAudio is the one thing it
+        cannot install for you — it is a system library, and
+        <kbd>./start</kbd> prints the line for your distribution.
+      </p>
+      <p>
+        <a href="https://github.com/kinglukasbigd-sudo/LOOPING_Engine">
+          github.com/kinglukasbigd-sudo/LOOPING_Engine</a>
+      </p>
+    </section>
+
+  </div>
+
+  <footer class="foot">
+    <p>
+      What it is not: a DAW, and not source separation. <code>CTR</code> and
+      <code>SIDE</code> are channel arithmetic — they lift a centred vocal out
+      of a mix that has one, and fall apart on a mix that does not.
+    </p>
+    <p>
+      506 checks in 17 files run on every push, including the panel's own
+      gestures pressed in a real browser.
+    </p>
+  </footer>
+
+</div>
+
+<script>
+  (function () {
+    var btn = document.getElementById('copy');
+    var cmd = document.getElementById('cmd');
+    if (!btn || !cmd) return;
+    btn.addEventListener('click', function () {
+      var text = cmd.textContent.trim();
+      var done = function () {
+        btn.textContent = 'Copied';
+        setTimeout(function () { btn.textContent = 'Copy'; }, 1400);
+      };
+      var fallback = function () {
+        var r = document.createRange();
+        r.selectNodeContents(cmd);
+        var s = window.getSelection();
+        s.removeAllRanges();
+        s.addRange(r);
+        btn.textContent = 'Press ⌘C';
+        setTimeout(function () { btn.textContent = 'Copy'; }, 2000);
+      };
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done, fallback);
+        } else {
+          fallback();
+        }
+      } catch (e) { fallback(); }
+    });
+  })();
+</script>
+</body>
+</html>

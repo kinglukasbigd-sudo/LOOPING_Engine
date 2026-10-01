@@ -247,6 +247,7 @@ function send(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
 
 /* ── formatting ─────────────────────────────────────────────────────── */
 const pad3 = (n) => String(n).padStart(3, '0');
+const pad2 = (n) => String(n).padStart(2, '0');
 const fx = (n, d) => (n === undefined || n === null) ? '—' : Number(n).toFixed(d);
 function dB(g) { return g <= 0.0001 ? '-inf' : (20 * Math.log10(g)).toFixed(1); }
 function secs(f, sr) { return sr ? (f / sr).toFixed(2) + ' s' : '—'; }
@@ -1280,8 +1281,12 @@ function renderState() {
        fact. The filename is the one thing that stays true. */
     const gone = !mapped && S.session && S.session.missing
               && S.session.missing['key:' + (bankBase() + i)];
+    /* The file, and which slice of it when there is one. MAP fills sixteen
+       keys from one file, and sixteen cells reading the same name is sixteen
+       cells saying nothing — the number is the only thing telling them apart. */
     setText(el.querySelector('.p-label'),
-            mapped ? p.name : (gone ? 'missing — ' + gone.name : 'unassigned'));
+            mapped ? (p.slice >= 0 ? p.name + ' · ' + pad2(p.slice + 1) : p.name)
+                   : (gone ? 'missing — ' + gone.name : 'unassigned'));
     setText(el.querySelector('.p-mode'), mapped ? p.mode : '—');
     const [pls, ple] = liveLoop(i, { kind: 'key', i, ls: p.ls, le: p.le });
     paintKeySpan(el, i, pls, ple, p.frames);
