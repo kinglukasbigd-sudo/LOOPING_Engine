@@ -345,7 +345,7 @@ PYTHONPATH=.pylibs python3 -m tests     # with the vendored dependencies
 python3 -m tests                        # with installed ones
 ```
 
-467 checks in 17 files, about 61 seconds on the machine they were written on —
+495 checks in 17 files, about 62 seconds on the machine they were written on —
 more than half of that the browser file, which is the only one that starts a
 server and drives a real page.
 Each file runs in its own process and prints PASS, FAIL or SKIP for every check,
