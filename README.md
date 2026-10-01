@@ -68,12 +68,14 @@ gesture that matters most would not have existed at all.
 
 ## The page about it
 
-It is live at **https://kinglukasbigd-sudo.github.io/LOOPING_Engine/**.
+It is live at **https://loop-engine-dj.web.app**.
 
 `site/` is that single static page, with the panel's own type and the measured
 numbers on it. It needs no build step and nothing to run: open
-`site/index.html`, or point any static host at that folder.
-`.github/workflows/pages.yml` publishes the folder on every push to `main`.
+`site/index.html`, or point any static host at that folder. `firebase.json`
+points Firebase Hosting at it; `firebase deploy --only hosting` puts it up.
+The screenshot and the fonts are cached for a year, the page itself not at all,
+so a deploy is visible on the next reload.
 
 ## Install, by hand
 
