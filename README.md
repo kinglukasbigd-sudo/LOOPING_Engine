@@ -842,6 +842,22 @@ Running at 48000 exercises never-resample in the other direction rather than
 less: a 44.1 kHz file folds 0.91875 into its playback step, which is the
 property working as designed.
 
+## What this depends on, and what it will not
+
+`numpy`, `sounddevice` and `soundfile`, and the two fonts in `ui/fonts/`. That
+is the whole list, and the bar for adding to it is high: a looper that someone
+installs on a laptop before a set should not need a package set larger than
+itself.
+
+The case that set the bar: a hold-for-filter effect wanted a recursive filter,
+and the obvious way to get one is `scipy.signal.lfilter`. SciPy is not here and
+is not going to be added for it — around 40 MB of compiled numerical library for
+four lines of difference equation. If that effect is ever built, it will be
+built out of what numpy already does well: a short cascade of moving averages
+computed with `cumsum` is a lowpass with a swept cutoff, vectorised, with no
+per-sample loop on the audio thread and nothing new to install. The effect is
+not in this build; the decision about how it would be made is.
+
 ## Craft contract
 
 Four rules the panel holds to, and how each was checked.
