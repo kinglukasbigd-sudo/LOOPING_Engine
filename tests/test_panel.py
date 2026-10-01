@@ -906,6 +906,50 @@ def t_a_focused_key_says_what_it_is_showing(page):
           "zoomed" not in cell())
 
 
+def t_tempo_match_both_ways(page):
+    """MATCH puts the track on the clock; TAKE puts the clock on the track."""
+    closed(page)
+    if not page.evaluate("S.tracks[0].loaded"):
+        open_file(page, "tk_bass")
+    page.evaluate("focusKind = 'track'; focus = 0; renderState()")
+    page.wait_for_function("S.tracks[0].bpm > 0", timeout=20000)
+    page.evaluate("send({op: 'transport.bpm', v: 124})")
+    page.wait_for_function("Math.abs(S.bpm - 124) < 0.01", timeout=10000)
+    page.evaluate("send({op: 'track.speed', i: 0, v: 1})")
+    page.wait_for_function("Math.abs(S.tracks[0].speed - 1) < 0.001", timeout=10000)
+    paint(page)
+    check("the rail says what the focused track is doing",
+          "track 1" in page.inner_text("#tempo-line")
+          and "×1.000" in page.inner_text("#tempo-line"),
+          page.inner_text("#tempo-line"))
+
+    page.evaluate("send({op: 'transport.bpm', v: 150})")
+    page.wait_for_function("Math.abs(S.bpm - 150) < 0.01", timeout=10000)
+    bpm = page.evaluate("S.tracks[0].bpm")
+    press(page, "m")
+    page.wait_for_function("Math.abs(S.tracks[0].speed - 1) > 0.001", timeout=10000)
+    paint(page)
+    got = page.evaluate("S.tracks[0].speed")
+    check("M plays the track at the speed that puts it on the clock",
+          abs(got - 150 / bpm) < 0.002, "×%.4f, wanted ×%.4f" % (got, 150 / bpm))
+    check("and the line says the track is no longer at its own pitch",
+          "armed" in page.evaluate(
+              "document.querySelector('#tempo-line').className"))
+
+    press(page, "Shift+M")
+    page.wait_for_function("f => Math.abs(S.bpm - f) < 0.02", arg=bpm, timeout=10000)
+    check("SHIFT-M takes the clock to the track instead, and moves no track",
+          abs(page.evaluate("S.bpm") - bpm) < 0.02
+          and abs(page.evaluate("S.tracks[0].speed") - got) < 1e-6,
+          "clock %.2f" % page.evaluate("S.bpm"))
+
+    page.evaluate("focusKind = 'key'; renderState()")
+    paint(page)
+    check("with a key in the panel there is nothing to match, and it says so",
+          "key" in page.inner_text("#tempo-line"), page.inner_text("#tempo-line"))
+    page.evaluate("focusKind = 'track'; send({op: 'track.speed', i: 0, v: 1}); renderState()")
+
+
 if __name__ == "__main__":
     base = tempfile.mkdtemp(prefix="le-panel-ui-")
     server = Panel(base)
@@ -931,6 +975,7 @@ if __name__ == "__main__":
                        t_a_bank_switch_moves_the_address_not_the_audio,
                        t_a_cue_is_set_then_jumped_then_cleared,
                        t_a_focused_key_says_what_it_is_showing,
+                       t_tempo_match_both_ways,
                        t_map_asks_and_mode_is_only_a_mode,
                        t_clearing_a_key,
                        t_feedback_lands_before_the_send,

@@ -79,6 +79,8 @@ once a device is there — you just can't hear it.
                                       , / .   jump loop ∓1 bar
                                       9 / 0   fit loop / whole file
                                       - / =   zoom out / in
+                                      M       match track to the clock
+                                      SHIFT+M take the clock from the track
                                       [ / ]   previous / next track
                  YUIO HJK;             hot cues 1–8, SHIFT clears
                                       L       load a file
@@ -155,6 +157,15 @@ to start there and keeps its length, which is the same operation as a beat jump.
 Setting or clearing one moves no loop point, and the marks on the waveform are
 ink ticks — the accent is already carrying the region. Beat jump slides that
 window by a beat (`7` `8`, or the buttons) or by a bar (`,` `.`).
+
+**Tempo match, both directions.** `MATCH` (or `M`) plays the focused track at
+the speed that puts its own detected tempo on the clock. It is the turntable
+move: the pitch goes with it, because this engine never resamples behind your
+back — the file is played faster, not stretched. `TAKE` (or `SHIFT-M`) does the
+opposite, setting the clock from the track and moving nothing about the track,
+for when the track is the reference the rest will follow. The rail says which
+track it would act on, its tempo and what speed it is playing at, and lights
+when that speed is no longer ×1.
 
 ## Looping a vocal out of a stereo mix
 

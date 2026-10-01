@@ -81,6 +81,7 @@ const HELP = {
   pmode:   ['WHOSE MODE',        'What ONE / GATE / LOOP act on: the key being edited, or the mode a key takes when you assign it.'],
   cues:    ['HOT CUES',          'Eight marks in this track, on Y U I O and H J K ; — press an empty one to drop it where the playhead is, press a set one to jump there, SHIFT to clear it. Jumps wait for the quantum.'],
   jump:    ['BEAT JUMP',         'Slides the loop window without changing its length. 7 and 8 do the same by one beat.'],
+  match:   ['TEMPO MATCH',       'MATCH plays the focused track at the speed that puts its own tempo on the clock — the turntable move, pitch and all. TAKE does the opposite and sets the clock from the track. M and SHIFT-M.'],
   session: ['SESSION',           'SAVE writes every track, key, region and zoom to a file. OPEN puts a set back.'],
   record:  ['RECORD',            'REC arms a take of the master output. RUN starts it, or it starts at once if the clock runs. REC again writes the file.'],
 };
@@ -291,6 +292,35 @@ function paintKeySpan(el, i, ls, le, frames) {
   spanCache[i] = k;
   el.style.setProperty('--rs', (a * 100).toFixed(3) + '%');
   el.style.setProperty('--re', ((1 - b) * 100).toFixed(3) + '%');
+}
+
+/* Tempo match, both directions, in one line of arithmetic each.
+
+   MATCH is the turntable move: play the track at the speed that puts its own
+   tempo on the clock. It changes pitch, because that is what varispeed does and
+   this engine never resamples behind your back — a file is played faster, not
+   stretched. TAKE is the other direction, for when the track is the reference:
+   the clock goes to the track's tempo and nothing about the track moves. */
+function matchable() {
+  const t = S && focusKind === 'track' ? S.tracks[focus] : null;
+  if (!t || !t.loaded) {
+    return { t: null, why: focusKind === 'key' ? 'the panel is showing a key'
+                                               : 'track ' + (focus + 1) + ' is empty' };
+  }
+  if (!(t.bpm > 0)) {
+    return { t: null, why: t.analysing ? 'track ' + (focus + 1) + ' is still being read'
+                                       : 'no tempo found in track ' + (focus + 1) };
+  }
+  return { t, why: '' };
+}
+
+function paintTempoLine() {
+  const line = $('#tempo-line');
+  if (!line || !S) return;
+  const m = matchable();
+  setText(line, m.t ? `track ${focus + 1} · ${fx(m.t.bpm, 1)} at ×${fx(m.t.speed, 3)}`
+                    : m.why);
+  line.classList.toggle('armed', !!m.t && Math.abs(m.t.speed - 1) > 0.0005);
 }
 
 /* One place that knows whether an edit goes to a track or a key. */
@@ -1110,6 +1140,7 @@ function renderState() {
   setText($('#bank-now'), 'ABCD'[settled('bank', S.bank || 0)] || 'A');
   buildCues();
   paintCues();
+  paintTempoLine();
 
   S.tracks.forEach((t, i) => {
     const el = $$('#strips .strip')[i];
@@ -1905,6 +1936,18 @@ const ACT = {
   jbeatf: () => { markQueued(focus, 'LOOP'); send({ op: 'track.loop.nudge', i: focus, v: 1 }); },
   jbarb: () => { markQueued(focus, 'LOOP'); send({ op: 'track.loop.nudge', i: focus, v: -4 }); },
   jbarf: () => { markQueued(focus, 'LOOP'); send({ op: 'track.loop.nudge', i: focus, v: 4 }); },
+  match: () => {
+    const m = matchable();
+    if (!m.t) { localError = `Nothing to match — ${m.why}.`; return; }
+    const v = Math.max(0.25, Math.min(4.0, S.bpm / m.t.bpm));
+    send({ op: 'track.speed', i: focus, v });
+  },
+  takebpm: () => {
+    const m = matchable();
+    if (!m.t) { localError = `No tempo to take — ${m.why}.`; return; }
+    $('#bpm').textContent = fx(m.t.bpm, 2);               // paint first
+    send({ op: 'transport.bpm', v: m.t.bpm });
+  },
   mappads: () => {
     const taken = S ? S.pads.filter(p => p.loaded).length : 0;
     if (taken && !mapArmed) {
@@ -2033,6 +2076,8 @@ window.addEventListener('keydown', (e) => {
     case 'Period': ACT.jbarf(); break;
     case 'Backquote': ACT.bank(); break;
     case 'KeyT': send({ op: 'tap' }); break;
+    /* The track to the clock, or the clock to the track. */
+    case 'KeyM': e.preventDefault(); if (e.shiftKey) ACT.takebpm(); else ACT.match(); break;
     case 'KeyG': ACT.quantum(); break;
     case 'KeyB': markQueued(focus, 'REV'); send({ op: 'track.rev', i: focus }); break;
     case 'ArrowLeft':  e.preventDefault(); nudgeHandle(-1, e.shiftKey); break;
