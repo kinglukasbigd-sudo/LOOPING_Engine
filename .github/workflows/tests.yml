@@ -39,12 +39,34 @@ jobs:
       # tests/test_panel.py drives the panel in a real browser. --with-deps
       # brings the system libraries chromium needs on a bare runner; without
       # this step those checks would SKIP rather than run.
+      #
+      # Kept between runs, because the download is the one part of this that
+      # depends on somebody else's server being well: a run on 1 Oct 2026 sat
+      # in this step until the job's own 15-minute limit cancelled it, and not
+      # one check had been attempted. Cached, the usual run restores it in
+      # seconds; cold, the step has a limit of its own, so a slow mirror costs
+      # the browser checks rather than the whole suite.
+      - name: Keep the browser between runs
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.pylibs/ms-playwright
+          key: playwright-${{ runner.os }}-1.63.0
+
       - name: Install the browser the panel tests drive
+        timeout-minutes: 6
+        continue-on-error: true
         env:
           PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.pylibs/ms-playwright
         run: |
           python -m pip install -r requirements-dev.txt
           python -m playwright install --with-deps chromium
 
+      # Whatever happened above, the checks run. Without the browser the panel
+      # ones print SKIP with the reason and `python -m tests` names them at the
+      # end, which is a far better answer than a job that was cancelled before
+      # it could say anything at all.
       - name: Run every check
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.pylibs/ms-playwright
         run: python -m tests
