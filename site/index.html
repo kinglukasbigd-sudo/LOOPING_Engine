@@ -29,6 +29,22 @@
     --legend: 0.14em;
   }
 
+  /* The one link on the page that does something, so it is the one thing
+     drawn in the accent rather than in the ink. Same hairline box as the
+     command below it: a region bounded by a rule, never a floating button. */
+  .open-line { margin: 0 0 14px; display: flex; flex-wrap: wrap;
+               align-items: baseline; gap: 10px; }
+  .open {
+    display: inline-block; padding: 9px 16px;
+    border: var(--rule); border-color: var(--accent);
+    color: var(--accent); text-decoration: none;
+    font-family: var(--display); font-size: 20px; font-weight: 600;
+    letter-spacing: var(--legend); text-transform: uppercase;
+  }
+  .open:hover, .open:focus-visible { background: var(--accent); color: var(--bg); }
+  .open-note { color: var(--text-2); font-size: 12px; max-width: 42ch; }
+  .cmd-note { color: var(--text-2); font-size: 12px; margin: 8px 0 0; max-width: 52ch; }
+
   * { box-sizing: border-box; }
   html { background: var(--bg); }
 
@@ -194,11 +210,21 @@
       keys. Nothing is hidden behind a menu, nothing moves unless you move it.
     </p>
 
+    <p class="open-line">
+      <a class="open" href="app/">Open it here</a>
+      <span class="open-note">— the whole instrument, in this browser. Nothing to
+      install, and the audio never leaves your machine.</span>
+    </p>
+
     <div class="cmd">
       <span class="p">$</span>
       <code id="cmd">./start</code>
       <button type="button" id="copy" aria-label="Copy the command">Copy</button>
     </div>
+    <p class="cmd-note">
+      Or run it on your own machine, where the output goes straight to the sound
+      card instead of through a browser — a few milliseconds closer.
+    </p>
 
     <div class="caps" aria-hidden="true">
       <div class="cap">1</div><div class="cap">2</div><div class="cap">3</div><div class="cap">4</div>

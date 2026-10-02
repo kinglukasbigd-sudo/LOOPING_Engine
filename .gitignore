@@ -15,3 +15,6 @@ venv/
 
 # Runtime stash for files dropped onto the panel.
 .inbox/
+
+# assembled by web/build.py from loopengine/ui and web/
+site/app/
