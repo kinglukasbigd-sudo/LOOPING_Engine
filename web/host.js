@@ -567,5 +567,47 @@
     { index: 0, name: 'the system output', default: true, rate: ctx ? ctx.sampleRate : 48000 },
   ]);
 
+  /* ── the way back to the page about this ─────────────────────────────
+     The instrument is the address, so the page describing it has to be
+     reachable from inside the instrument. It goes at the end of the help
+     sheet, which is what `?` already opens — no existing key, button or
+     gesture changes meaning, and nothing new sits on screen until somebody
+     asks for help.
+
+     It is added here rather than in app.js because app.js is the Python
+     build's file too, and there is no /artifact to point at there. The sheet
+     is filled lazily on the first `?`, so this watches for that and appends
+     one row in the sheet's own shape. */
+  function wireAbout() {
+    const sheet = document.querySelector('#helpsheet');
+    if (!sheet) return;
+    const style = document.createElement('style');
+    style.textContent =
+      '.hrow a { color: var(--accent); text-decoration: none; ' +
+      'border-bottom: 1px solid var(--accent); }' +
+      '.hrow a:hover, .hrow a:focus-visible { background: var(--accent); ' +
+      'color: var(--bg); border-bottom-color: transparent; }';
+    document.head.appendChild(style);
+
+    const add = () => {
+      if (!sheet.childElementCount || sheet.querySelector('[data-about]')) return;
+      const row = document.createElement('div');
+      row.className = 'hrow';
+      row.setAttribute('data-about', '');
+      row.innerHTML = '<b>WHAT THIS IS</b><span>' +
+        '<a href="artifact/">The page about this instrument</a>' +
+        ' — what it is for, what it does not do, and how to run it on your ' +
+        'own machine, where the sound card is a few milliseconds closer.</span>';
+      /* First, not last. The sheet is twenty-six rows in a strip a few rows
+         tall, so the end of it is a thousand pixels of scrolling away — and
+         somebody opening `?` on an instrument they have never seen is asking
+         this question before any of the others. */
+      sheet.insertBefore(row, sheet.firstChild);
+    };
+    new MutationObserver(add).observe(sheet, { childList: true });
+    add();
+  }
+
   wireDrop();
+  wireAbout();
 })();

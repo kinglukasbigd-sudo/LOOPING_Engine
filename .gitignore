@@ -17,4 +17,4 @@ venv/
 .inbox/
 
 # assembled by web/build.py from loopengine/ui and web/
-site/app/
+public/

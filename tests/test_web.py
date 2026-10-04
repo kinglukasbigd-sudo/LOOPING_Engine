@@ -2,8 +2,8 @@
 
     PYTHONPATH=.pylibs python3 -m tests.test_web
 
-site/app/ is the panel driving an engine written in JavaScript instead of one
-written in Python. The panel is the same file in both, so what has to be
+public/ is the panel driving an engine written in JavaScript instead of one
+written in Python, with the page about it one level in at /artifact. The panel is the same file in both, so what has to be
 checked is the new engine: that its kernels produce the samples numpy
 produces, and that the build actually assembles.
 
@@ -96,7 +96,7 @@ def t_the_build_assembles():
     """web/build.py produces something a static host can serve as it stands."""
     r = subprocess.run([sys.executable, os.path.join(ROOT, "web", "build.py")],
                        capture_output=True, text=True, cwd=ROOT)
-    out = os.path.join(ROOT, "site", "app")
+    out = os.path.join(ROOT, "public")
     check("web build: it runs", r.returncode == 0,
           (r.stderr or "").strip().splitlines()[-1] if r.returncode else "")
     want = ["index.html", "app.js", "view.js", "app.css", "tokens.css",
@@ -113,15 +113,36 @@ def t_the_panel_is_not_forked():
     """One panel, two engines. A copy that drifts is two panels."""
     for name in ("app.js", "view.js", "app.css", "tokens.css"):
         a = open(os.path.join(ROOT, "loopengine", "ui", name), "rb").read()
-        b_path = os.path.join(ROOT, "site", "app", name)
+        b_path = os.path.join(ROOT, "public", name)
         b = open(b_path, "rb").read() if os.path.exists(b_path) else b""
         check("web build: %s is the panel's own file, byte for byte" % name, a == b)
+
+
+def t_the_tool_is_the_address():
+    """The root is the instrument, and the page about it is reachable from
+    inside the instrument rather than in front of it."""
+    root = open(os.path.join(ROOT, "public", "index.html")).read()
+    ok = 'id="app"' in root
+    check("web build: the root page is the panel, not a description", ok,
+          "" if ok else "the root is not the panel")
+    art = os.path.join(ROOT, "public", "artifact", "index.html")
+    check("web build: the page about it is served at /artifact", os.path.exists(art))
+    if os.path.exists(art):
+        check("web build: that page links back to the instrument",
+              'href="../"' in open(art).read())
+    host = open(os.path.join(ROOT, "web", "host.js")).read()
+    check("web build: the panel links to it from the help sheet `?` opens",
+          'artifact/' in host and "#helpsheet" in host)
+    app = open(os.path.join(ROOT, "loopengine", "ui", "app.js")).read()
+    ok = "artifact" not in app
+    check("web build: no existing key or button was given a new meaning", ok,
+          "" if ok else "app.js mentions the page")
 
 
 def t_the_page_loads_the_engine_before_the_panel():
     """host.js installs the engine behind window.WebSocket; app.js opens one
     on its first pass. The order is the whole trick, so it is checked."""
-    html = open(os.path.join(ROOT, "site", "app", "index.html")).read()
+    html = open(os.path.join(ROOT, "public", "index.html")).read()
     ih, ia = html.find("host.js"), html.find("app.js")
     check("web build: host.js is loaded before app.js", 0 <= ih < ia,
           "host at %d, app at %d" % (ih, ia))
@@ -147,6 +168,7 @@ import re  # noqa: E402  (used by the check above)
 if __name__ == "__main__":
     for fn in (t_kernels_match_numpy,
                t_the_build_assembles,
+               t_the_tool_is_the_address,
                t_the_panel_is_not_forked,
                t_the_page_loads_the_engine_before_the_panel,
                t_the_ops_the_panel_sends_are_all_handled):

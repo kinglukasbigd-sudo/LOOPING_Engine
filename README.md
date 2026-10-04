@@ -66,16 +66,34 @@ sweeping a loop, dragging a handle, scrolling by the lit span on a row. Mouse
 events are synthesised for a tap and never for a drag, so on a touch screen the
 gesture that matters most would not have existed at all.
 
-## The page about it
+## On the web
 
-It is live at **https://loop-engine-dj.web.app**.
+**https://loop-engine-dj.web.app** is the instrument, not a page about it.
+Opening it starts an engine: drag audio onto the panel and it plays. The
+address is the tool, so the page describing it sits at `/artifact` and is
+reached from inside the panel — the last row of the help sheet `?` opens.
+Nothing on screen changed to make room for it.
 
-`site/` is that single static page, with the panel's own type and the measured
-numbers on it. It needs no build step and nothing to run: open
-`site/index.html`, or point any static host at that folder. `firebase.json`
-points Firebase Hosting at it; `firebase deploy --only hosting` puts it up.
-The screenshot and the fonts are cached for a year, the page itself not at all,
-so a deploy is visible on the next reload.
+The engine there is written in JavaScript and runs in an AudioWorklet:
+`web/worklet.js` is `dsp.py`, `track.py`, `voice.py` and `transport.py`, and
+`web/analyze.js` is the offline half, in a worker. `tests/test_web.py` renders
+blocks with the Python DSP and compares them against the JavaScript — bit for
+bit at the file's own rate, and within one float32 ulp with a rate conversion
+folded in, reversed, or over a region shorter than a block.
+
+The panel itself is not forked. `web/host.js` replaces `window.WebSocket` with
+something that is not a socket, and `app.js`, `view.js` and both stylesheets
+are copied into the build unchanged; a check fails if they ever drift.
+
+Three things the browser build does not have, and says so rather than offering
+a control that does nothing: recording the master, choosing an output device,
+and audio in a saved session — a page cannot reopen a file it was handed once,
+so a restored session keeps every region, gain, cue and key setting and names
+the files you need to pick again. Latency is about 45 ms press-to-speaker
+against 21 ms native, which is Web Audio's floor.
+
+`python3 web/build.py` assembles `public/` from `loopengine/ui/` and `web/`.
+`firebase deploy --only hosting` runs that build first and puts it up.
 
 ## Install, by hand
 
